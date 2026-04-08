@@ -105,7 +105,7 @@ def _make_conference(tmp_path: Path, n_talks: int = 3, duration: float = 2.0) ->
 def test_convert_mp3_to_aac_produces_aac_file(tmp_path: Path) -> None:
     mp3 = tmp_path / "test.mp3"
     make_silent_mp3(mp3, duration_seconds=2.0)
-    aac = tmp_path / "test.aac"
+    aac = tmp_path / "test.m4a"
 
     convert_mp3_to_aac(mp3, aac, _FFMPEG)
 
@@ -118,7 +118,7 @@ def test_convert_mp3_to_aac_returns_duration(tmp_path: Path) -> None:
     mp3 = tmp_path / "test.mp3"
     expected = 2.0
     make_silent_mp3(mp3, duration_seconds=expected)
-    aac = tmp_path / "test.aac"
+    aac = tmp_path / "test.m4a"
 
     duration = convert_mp3_to_aac(mp3, aac, _FFMPEG)
 
@@ -129,7 +129,7 @@ def test_convert_mp3_to_aac_returns_duration(tmp_path: Path) -> None:
 @requires_ffmpeg
 def test_audio_error_on_invalid_input(tmp_path: Path) -> None:
     mp3 = tmp_path / "nonexistent.mp3"
-    aac = tmp_path / "output.aac"
+    aac = tmp_path / "output.m4a"
 
     with pytest.raises(AudioError):
         convert_mp3_to_aac(mp3, aac, _FFMPEG)
@@ -239,3 +239,42 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
     build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
 
     assert output.exists(), "m4b should still be produced when one MP3 is missing"
+
+
+@requires_ffmpeg
+def test_build_m4b_chapter_boundaries_aligned(tmp_path: Path) -> None:
+    """Chapter end timestamps must sum to within 1s of the m4b total duration.
+
+    Catches the ADTS estimation bug: if per-talk durations are underestimated,
+    the final chapter ends before the actual audio ends.
+    """
+    n = 3
+    duration = 3.0
+    conference = _make_conference(tmp_path, n_talks=n, duration=duration)
+    audio_dir = tmp_path / "audio"
+    output = tmp_path / "output.m4b"
+
+    build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    # Get total m4b duration
+    probe = subprocess.run(
+        [str(_FFPROBE), "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(output)],
+        capture_output=True, text=True, check=True,
+    )
+    total_s = float(probe.stdout.strip())
+
+    # Get chapter metadata
+    ch_result = subprocess.run(
+        [str(_FFPROBE), "-v", "quiet", "-print_format", "json",
+         "-show_chapters", str(output)],
+        capture_output=True, text=True, check=True,
+    )
+    chapters = json.loads(ch_result.stdout).get("chapters", [])
+    assert chapters, "Expected chapters in output m4b"
+
+    last_end_s = float(chapters[-1]["end_time"])
+    assert abs(last_end_s - total_s) < 1.0, (
+        f"Last chapter end ({last_end_s:.3f}s) should be within 1s of "
+        f"total m4b duration ({total_s:.3f}s); drift={total_s - last_end_s:.3f}s"
+    )

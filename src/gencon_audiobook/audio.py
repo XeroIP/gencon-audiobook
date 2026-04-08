@@ -341,7 +341,7 @@ def build_m4b(
             skipped.append(talk.title)
             continue
 
-        aac_path = mp3_path.with_suffix(".aac")
+        aac_path = mp3_path.with_suffix(".m4a")
         try:
             duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path)
             talk.duration_seconds = duration
@@ -365,7 +365,7 @@ def build_m4b(
         tmp = Path(tmpdir)
         metadata_path = tmp / "chapters.ffmeta"
         concat_path = tmp / "concat.txt"
-        intermediate_aac = tmp / "intermediate.aac"
+        intermediate_aac = tmp / "intermediate.m4a"
 
         _write_ffmetadata(conference, metadata_path)
 
