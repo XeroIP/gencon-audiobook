@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(pip install -e *)",
+      "Bash(pytest *)",
+      "Bash(python -m build)",
+      "Bash(python -m gencon_audiobook *)",
+      "Bash(python -c *)",
+      "Bash(gencon-audiobook *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git push *)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue list *)",
+      "Bash(python scripts/update_fixtures.py)"
+    ]
+  }
+}
