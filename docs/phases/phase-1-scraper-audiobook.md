@@ -108,7 +108,7 @@ src/gencon_audiobook/
   downloader.py
   ffmpeg_manager.py
   audio.py
-  epub_builder.py   # stub only in Phase 1
+  epub_builder.py   # stub only in Phase 1 — define build_epub() raising NotImplementedError("epub generation coming in Phase 2")
   cli.py
 
 tests/
@@ -322,7 +322,7 @@ After implementing the scraper, run `scripts/update_fixtures.py` to save current
 - `test_scraper_detects_cloudflare_block` — 403 raises ScraperError with appropriate message
 
 `test_scraper_live.py` must test:
-- `fetch_available_conferences()` returns 40+ conferences (General Conference has been running since 1971)
+- `fetch_available_conferences()` returns 100+ conferences (General Conference has been running since 1971, ~2/year)
 - `scrape_conference(url)` for the most recent conference returns 30+ talks
 - Each talk has non-empty title, speaker, mp3_url, transcript_html
 - All mp3_urls pass validate_url()
@@ -385,7 +385,10 @@ Define `DownloadError(Exception)`.
 - On crash/interruption: `.tmp` files are cleaned up on next run startup
 - Resume: compare expected size (from `Content-Length` header) to existing file size; skip if match
 - Convert all images to JPEG via Pillow before saving (handles WebP, PNG, GIF, etc.)
-- Speaker photos saved to `output_dir/speakers/NN-speaker-name.jpg` (zero-padded talk number)
+- MP3s saved to `output_dir/audio/{talk_index:03d}-{sanitized_title}.mp3`
+- Speaker photos saved to `output_dir/speakers/{talk_index:03d}-{sanitized_speaker}.jpg`
+- Both use `talk.talk_index` (1-based position across the whole conference) for the numeric prefix,
+  ensuring `audio.py` can locate the correct MP3 for each Talk using the same formula
 - `rich` progress: one overall progress bar for all files, one inner bar for current file (bytes)
 - On download failure after retries: log ERROR, continue with remaining files
 
@@ -422,6 +425,20 @@ def ensure_ffmpeg() -> Path:
     Raises:
         FfmpegNotFoundError: with install instructions if ffmpeg cannot be located or downloaded.
     """
+
+def ensure_ffprobe() -> Path:
+    """Locate ffprobe, using the same directory as the ffmpeg binary.
+
+    ffprobe is always bundled alongside ffmpeg (both system installs and static-ffmpeg).
+    Calls ensure_ffmpeg() first to resolve the binary directory, then looks for ffprobe
+    in the same location.
+
+    Returns:
+        Path to the ffprobe binary.
+
+    Raises:
+        FfmpegNotFoundError: if ffprobe cannot be found alongside ffmpeg.
+    """
 ```
 
 Define `FfmpegNotFoundError(Exception)`.
@@ -437,6 +454,8 @@ Key behaviors:
    - Linux: sudo apt install ffmpeg (or equivalent)
   Then re-run gencon-audiobook."
 - Run `ffmpeg -version` to get version string, parse first line
+- `ensure_ffprobe()` resolves ffprobe by replacing the `ffmpeg` binary name with `ffprobe`
+  in the path returned by `ensure_ffmpeg()` — no separate download needed
 
 ---
 
@@ -451,24 +470,32 @@ def build_m4b(
     output_path: Path,
     cover_path: Path | None,
     ffmpeg_path: Path,
+    ffprobe_path: Path,
 ) -> None:
     """Build a chaptered m4b audiobook from downloaded MP3 files.
 
     Process:
-    1. Convert each MP3 to AAC using ffmpeg
-    2. Write an ffmpeg FFMETADATA1 chapter file
+    1. Convert each MP3 to AAC using ffmpeg; update talk.duration_seconds with the returned value
+    2. Write an ffmpeg FFMETADATA1 chapter file using cumulative durations
     3. Concatenate all AAC files
     4. Mux chapters, cover art, and metadata into final m4b
+
+    MP3 files are located using the formula: audio_dir / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
+    This matches the filename written by downloader.py.
+
+    talk.duration_seconds is populated by this function during step 1 — it is 0.0 on the
+    Conference object coming in and is set in-place before the FFMETADATA1 file is written.
 
     Chapter titles use format: "Talk Title -- Speaker Name"
     Sessions are represented as chapter groupings (no separate session chapters).
 
     Args:
-        conference: Conference object with talk metadata and durations.
-        audio_dir: Directory containing downloaded MP3 files.
+        conference: Conference object with talk metadata. duration_seconds is set in-place.
+        audio_dir: Directory containing downloaded MP3 files (and where AAC files are written).
         output_path: Path for the output .m4b file.
         cover_path: Optional path to JPEG cover art.
         ffmpeg_path: Path to ffmpeg binary from ensure_ffmpeg().
+        ffprobe_path: Path to ffprobe binary from ensure_ffprobe().
 
     Raises:
         AudioError: if any ffmpeg step fails.
@@ -579,6 +606,8 @@ Implement a minimal but functional CLI. Full error handling and polish comes in 
               help="Produce only the epub, skip audiobook. (Phase 2)")
 @click.option("--verbose", is_flag=True, default=False,
               help="Enable DEBUG-level console output.")
+@click.option("--overwrite", is_flag=True, default=False,
+              help="Overwrite existing output files instead of skipping.")
 @click.version_option()
 def main(...):
 ```
@@ -621,19 +650,19 @@ Run after implementation is complete. All steps must pass before starting Phase 
 # 1. Install
 pip install -e ".[dev]"
 
-# 2. Unit tests
+# 2. Bootstrap fixtures (required before scraper unit tests can run)
+python scripts/update_fixtures.py
+# Verify: tests/fixtures/ contains 3 HTML files, all non-empty
+
+# 3. Unit tests
 pytest tests/test_utils.py -v
 pytest tests/test_scraper.py -v
 pytest tests/test_downloader.py -v
 pytest tests/test_audio.py -v
 
-# 3. Update fixtures from live site
-python scripts/update_fixtures.py
-# Verify: tests/fixtures/ contains 3 HTML files, all non-empty
-
 # 4. Live scraper smoke test
 pytest tests/test_scraper_live.py -v -m live
-# Expected: passes, returns 40+ conferences and 30+ talks for most recent
+# Expected: passes, returns 100+ conferences (running since 1971, 2/year) and 30+ talks for most recent
 
 # 5. End-to-end audiobook only
 gencon-audiobook --audiobook-only --output ./test_output

@@ -111,6 +111,9 @@ Before starting the download, check available disk space:
 
 ```python
 import shutil
+from rich.console import Console
+
+console = Console()  # module-level; passed into helpers that need to print
 
 def check_disk_space(output_dir: Path, required_mb: int = 500) -> None:
     """Warn if available disk space is below required_mb."""
@@ -183,8 +186,9 @@ Handle gracefully (no traceback):
   before attempting ffmpeg work
 - **Partial downloads (some talks missing)**: Continue building with available talks; list
   skipped talks in final summary
-- **Conference already downloaded**: Detect that output files already exist and ask user whether
-  to overwrite or skip. Default: skip (print message explaining, add `--overwrite` flag)
+- **Conference already downloaded**: If output files already exist and `--overwrite` is not set,
+  print a message and exit with code 0. Never prompt interactively — the tool must be
+  scriptable. `--overwrite` was declared in Phase 1 and is wired up here.
 - **Conference selection**: If `--conference` value doesn't match any available conference,
   print the list of available conferences and exit with a helpful message
 

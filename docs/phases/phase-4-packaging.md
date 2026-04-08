@@ -172,7 +172,20 @@ jobs:
 
 ---
 
-## Step 4: Issue Templates
+## Step 4: Repository Setup (One-Time)
+
+Before the CI workflows will work correctly, create the required GitHub label:
+
+```bash
+gh label create website-changed --description "The Church website structure changed" --color "e4e669"
+```
+
+The `live-test.yml` workflow filters for open issues with this label before creating a new one.
+If the label does not exist, the issue-creation API call will fail silently.
+
+---
+
+## Step 5: Issue Templates
 
 ### `.github/ISSUE_TEMPLATE/bug_report.md`
 
@@ -234,7 +247,7 @@ labels: bug, website-changed
 
 ---
 
-## Step 5: `CONTRIBUTING.md`
+## Step 6: `CONTRIBUTING.md`
 
 Must cover:
 
@@ -301,6 +314,10 @@ gencon-audiobook --help
 
 # 6. Verify issue template format
 # GitHub -> Issues -> "New Issue" -> verify templates appear
+
+# 7. Verify website-changed label exists
+gh label list | grep website-changed
+# Expected: label is present
 ```
 
 **Exit criteria**: CI green on all 12 matrix entries. Package builds and installs cleanly.

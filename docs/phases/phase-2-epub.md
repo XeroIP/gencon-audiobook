@@ -212,7 +212,7 @@ Structure:
   <link rel="stylesheet" type="text/css" href="stylesheet.css"/>
 </head>
 <body>
-  <img class="speaker-photo" src="images/speaker-{NNN}.jpg" alt="{talk.speaker}"/>
+  <img class="speaker-photo" src="images/speaker-{talk.talk_index:03d}.jpg" alt="{talk.speaker}"/>
   <p class="byline">{talk.speaker}</p>
   <h1>{talk.title}</h1>
   {sanitized_transcript_html}
@@ -236,8 +236,10 @@ Before embedding transcript HTML from the scraper:
 ### Images
 
 - Copy `cover.jpg` from `images_dir` to `OEBPS/images/cover.jpg`
-- Copy each speaker photo from `images_dir/speakers/` to `OEBPS/images/speaker-NNN.jpg`
-  (zero-padded sequential number matching the talk order)
+- Locate each talk's speaker photo using the same filename formula as `downloader.py`:
+  `images_dir/speakers/{talk.talk_index:03d}-{sanitize_filename(talk.speaker)}.jpg`
+  Copy to `OEBPS/images/speaker-{talk.talk_index:03d}.jpg`
+- If a speaker photo file does not exist for a talk, omit the `<img>` element in that chapter
 - All images must be JPEG — convert if necessary using Pillow
 - Speaker photos: resize to max 300px wide (maintaining aspect ratio) before embedding
 - If cover.jpg does not exist: skip the cover page image, use a text-only cover page
@@ -250,9 +252,14 @@ Add the `--epub-only` flag (declared in Phase 1 but not wired up).
 
 When `--epub-only`:
 - Skip the ffmpeg check and audio conversion
-- Still scrape and download images (speaker photos needed for epub)
+- Still scrape (transcripts are needed) and download images (speaker photos needed for epub)
 - Build epub only
-- Note in Phase 1 the flag is declared but prints "epub generation coming in Phase 2" if used
+
+Add `skip_audio: bool = False` parameter to `download_conference()` in `downloader.py`.
+When `True`, skip all MP3 downloads and only download cover and speaker photos.
+This keeps the downloader API clean rather than duplicating it.
+
+In Phase 1 the `--epub-only` flag prints "epub generation coming in Phase 2" — wire it up here.
 
 ---
 

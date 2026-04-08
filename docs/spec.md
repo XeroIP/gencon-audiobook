@@ -19,6 +19,7 @@ gencon-audiobook --audiobook-only         # Produce only the m4b
 gencon-audiobook --epub-only              # Produce only the epub
 gencon-audiobook --output ~/Books         # Custom output directory
 gencon-audiobook --verbose                # Enable DEBUG-level console output
+gencon-audiobook --overwrite              # Overwrite existing output files
 ```
 
 ## Output Structure
@@ -28,11 +29,20 @@ gencon-audiobook --verbose                # Enable DEBUG-level console output
   April 2024 General Conference.m4b     # Complete audiobook with chapters
   April 2024 General Conference.epub    # Transcript companion
   cover.jpg                             # Conference cover image
-  speakers/                             # Speaker photos (for reference)
-    01-speaker-name.jpg
+  audio/                                # Downloaded and converted audio
+    001-sanitized-title.mp3             # Zero-padded talk_index, sanitized title
+    001-sanitized-title.aac             # Intermediate AAC (deleted after m4b is built)
+    ...
+  speakers/                             # Speaker photos (for reference and epub)
+    001-speaker-name.jpg                # Zero-padded talk_index, sanitized speaker name
     ...
   gencon-audiobook.log                  # Full DEBUG log for troubleshooting
 ```
+
+File naming convention: all downloaded files use `{talk_index:03d}-{sanitized_name}.ext`
+where `talk_index` is the talk's 1-based position across the whole conference.
+`sanitize_filename()` is applied to the name component. This ensures stable, sortable filenames
+that both `downloader.py` and `audio.py` can compute independently from the Talk object.
 
 ---
 
@@ -95,20 +105,20 @@ churchofjesuschrist.org
 class Talk:
     title: str
     speaker: str
-    description: str
     talk_url: str
     mp3_url: str | None = None
     transcript_html: str | None = None
     speaker_image_url: str | None = None
     session_name: str = ""
-    session_number: int = 0
-    talk_number: int = 0
-    duration_seconds: float = 0.0
+    session_number: int = 0   # 1-indexed
+    talk_number: int = 0      # 1-indexed within the session
+    talk_index: int = 0       # 1-indexed across the whole conference (used for filenames)
+    duration_seconds: float = 0.0  # set by audio.py during MP3->AAC conversion
 
 @dataclass
 class Session:
     name: str          # e.g., "Saturday Morning Session"
-    number: int
+    number: int        # 1-indexed
     talks: list[Talk]
 
 @dataclass
@@ -167,7 +177,7 @@ Dependencies intentionally NOT used:
 | `utils.py` | `sanitize_filename()`, `validate_url()` (allowlist enforcement) |
 | `scraper.py` | Fetch all conference URLs, parse conference listing, parse talk pages, return Conference objects |
 | `downloader.py` | Download MP3s, cover, speaker photos with retry/backoff, .tmp+rename, resume |
-| `ffmpeg_manager.py` | Locate ffmpeg (system PATH first, static-ffmpeg fallback) |
+| `ffmpeg_manager.py` | Locate ffmpeg and ffprobe (system PATH first, static-ffmpeg fallback) |
 | `audio.py` | Convert MP3->AAC, assemble m4b with FFMETADATA1 chapters and cover art |
 | `epub_builder.py` | Generate EPUB 3 manually as ZIP of XHTML with theme-safe CSS |
 | `cli.py` | Click CLI entry point, conference selection, disk space warning, error handling |
