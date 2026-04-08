@@ -1,0 +1,23 @@
+# Output files
+*.m4b
+*.epub
+*.mp3
+*.aac
+*.tmp
+/output/
+/test_output/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# Claude Code
+.claude/settings.local.json
