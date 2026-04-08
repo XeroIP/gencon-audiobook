@@ -188,8 +188,9 @@ Dependencies intentionally NOT used:
 
 ## Security Requirements
 
-1. **URL allowlist** — Only fetch from `churchofjesuschrist.org`, `*.ldscdn.org`,
-   `media*.churchofjesuschrist.org`. Reject and log any other domain.
+1. **URL allowlist** — Only fetch from `churchofjesuschrist.org`, `*.churchofjesuschrist.org`
+   (covers www, assets, media, etc.), and `*.ldscdn.org`. Reject and log any other domain.
+   MP3s are served from `assets.churchofjesuschrist.org`.
 2. **Filename sanitization** — Strip characters outside `[a-zA-Z0-9 ._-]`. Prevent path
    traversal (`..`, absolute paths, null bytes). Truncate at 200 characters.
 3. **SSL verification** — Always on. Never `verify=False`.

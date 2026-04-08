@@ -6,11 +6,11 @@ globs: src/**/*.py
 
 ## URL validation
 - Validate ALL URLs against the domain allowlist before fetching:
-  - `churchofjesuschrist.org`
-  - `*.ldscdn.org`
-  - `media*.churchofjesuschrist.org`
+  - `churchofjesuschrist.org` (bare domain)
+  - `*.churchofjesuschrist.org` (any subdomain — covers www, assets, media, etc.)
+  - `*.ldscdn.org` (any subdomain)
 - Reject and log any URL outside the allowlist — never silently skip
-- MP3 URLs must match `https://*.ldscdn.org/*.mp3` or `https://media*.churchofjesuschrist.org/*`
+- MP3 URLs are served from `https://assets.churchofjesuschrist.org/` (verified against real site)
 - Log all external URLs fetched at DEBUG level
 
 ## Filename sanitization

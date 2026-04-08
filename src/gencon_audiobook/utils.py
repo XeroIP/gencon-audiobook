@@ -15,9 +15,9 @@ _MAX_FILENAME_LENGTH = 200
 _ALLOWED_HOSTNAMES = re.compile(
     r"""
     ^(
-        churchofjesuschrist\.org          |   # exact domain
-        [a-z0-9-]+\.ldscdn\.org           |   # *.ldscdn.org
-        media[a-z0-9-]*\.churchofjesuschrist\.org  # media*.churchofjesuschrist.org
+        churchofjesuschrist\.org                    |   # bare domain
+        [a-z0-9][a-z0-9-]*\.churchofjesuschrist\.org |   # any *.churchofjesuschrist.org subdomain
+        [a-z0-9][a-z0-9-]*\.ldscdn\.org               # any *.ldscdn.org subdomain
     )$
     """,
     re.VERBOSE | re.IGNORECASE,

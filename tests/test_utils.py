@@ -114,6 +114,14 @@ def test_validate_url_media_numbered_subdomain():
     assert validate_url("https://media2.churchofjesuschrist.org/audio/talk.mp3") is True
 
 
+def test_validate_url_www_subdomain():
+    assert validate_url("https://www.churchofjesuschrist.org/study/general-conference") is True
+
+
+def test_validate_url_assets_subdomain():
+    assert validate_url("https://assets.churchofjesuschrist.org/abc123-32k-en.mp3") is True
+
+
 def test_validate_url_non_allowlisted_domain_rejected():
     assert validate_url("https://evil.com/malware.mp3") is False
 
