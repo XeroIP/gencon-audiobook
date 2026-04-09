@@ -11,14 +11,11 @@ import requests
 from PIL import Image
 from rich.progress import (
     BarColumn,
-    DownloadColumn,
     MofNCompleteColumn,
     Progress,
-    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
     TimeRemainingColumn,
-    TransferSpeedColumn,
 )
 
 from .models import Conference, Talk
@@ -285,18 +282,18 @@ def download_conference(
     )
 
     overall_progress = Progress(
-        SpinnerColumn(),
         MofNCompleteColumn(),
-        TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
+        TextColumn("[progress.description]{task.description}"),
         TimeRemainingColumn(),
     )
     file_progress = Progress(
-        TextColumn("  {task.description}"),
+        MofNCompleteColumn(),
         BarColumn(),
-        DownloadColumn(),
-        TransferSpeedColumn(),
+        TaskProgressColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeRemainingColumn(),
     )
 
     skipped = 0

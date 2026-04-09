@@ -14,7 +14,6 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
-    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
     TimeRemainingColumn,
@@ -390,10 +389,11 @@ def build_m4b(
     # Step 1: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
     progress = Progress(
-        BarColumn(),
         MofNCompleteColumn(),
-        TimeRemainingColumn(),
+        BarColumn(),
+        TaskProgressColumn(),
         TextColumn("[progress.description]{task.description}"),
+        TimeRemainingColumn(),
     )
     with progress:
         task = progress.add_task("Converting to AAC", total=len(talks))
