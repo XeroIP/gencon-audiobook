@@ -9,7 +9,18 @@ Download General Conference talks from [churchofjesuschrist.org](https://www.chu
 
 Single `pip install`, no prerequisites beyond Python 3.10+. ffmpeg is located automatically — on your PATH if present, otherwise downloaded once via `static-ffmpeg`.
 
-> **Disclaimer:** This is an unofficial tool. It is not affiliated with, endorsed by, or sponsored by The Church of Jesus Christ of Latter-day Saints. Downloaded content is copyright Intellectual Reserve, Inc. and is permitted for personal, noncommercial use per the Church's Terms of Use.
+Inspired by [General-Conference-to-Audiobook](https://github.com/ChurchofJesusChristDev/General-Conference-to-Audiobook).
+
+> **Disclaimer:** This is an unofficial tool not affiliated with The Church of Jesus Christ of Latter-day Saints. General Conference content is copyright Intellectual Reserve, Inc. All rights reserved. This tool downloads content for personal, noncommercial use as permitted by the Church's Terms of Use.
+
+---
+
+## Quick Start
+
+```bash
+pip install gencon-audiobook
+gencon-audiobook
+```
 
 ---
 
@@ -129,6 +140,17 @@ Downloaded files persist after the build. Running with `--audiobook-only` or `--
 
 ---
 
+## Documentation
+
+Full documentation is available on the [project wiki](https://github.com/XeroIP/gencon-audiobook/wiki):
+
+- [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) — step-by-step install and usage guide, written for beginners
+- [Listening Guide](https://github.com/XeroIP/gencon-audiobook/wiki/Listening-Guide) — how to use the output files on every platform (no technical knowledge required)
+- [Architecture](https://github.com/XeroIP/gencon-audiobook/wiki/Architecture) — codebase structure for contributors
+- [Technical Decisions](https://github.com/XeroIP/gencon-audiobook/wiki/Technical-Decisions) — design choices with rationale
+
+---
+
 ## Development
 
 ```bash
@@ -172,6 +194,9 @@ tests/
   test_scraper_live.py    Live smoke tests (@pytest.mark.live)
   test_integration.py     End-to-end test (@pytest.mark.integration)
   fixtures/               Saved HTML snapshots for scraper unit tests
+
+scripts/
+  update_fixtures.py      Refresh HTML fixtures from the live site
 ```
 
 ---
