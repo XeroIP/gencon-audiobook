@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from conftest import make_jpeg as _make_jpeg
 from gencon_audiobook.epub_builder import (
     EpubError,
     _sanitize_transcript,
@@ -22,12 +23,6 @@ from gencon_audiobook.models import Conference, Session, Talk
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
-
-def _make_jpeg(path: Path, size: tuple[int, int] = (100, 100), color: str = "gray") -> None:
-    """Write a minimal JPEG test image to path, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img = Image.new("RGB", size, color=color)
-    img.save(path, format="JPEG")
 
 
 def _make_conference(n_talks: int = 3, include_transcripts: bool = True) -> Conference:
