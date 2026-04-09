@@ -133,7 +133,7 @@ def test_convert_mp3_to_aac_produces_aac_file(tmp_path: Path) -> None:
     make_silent_mp3(mp3, duration_seconds=2.0)
     aac = tmp_path / "test.m4a"
 
-    convert_mp3_to_aac(mp3, aac, _FFMPEG)
+    convert_mp3_to_aac(mp3, aac, _FFMPEG, _FFPROBE)
 
     assert aac.exists(), "AAC output file should exist"
     assert aac.stat().st_size > 0, "AAC output file should be non-empty"
@@ -146,7 +146,7 @@ def test_convert_mp3_to_aac_returns_duration(tmp_path: Path) -> None:
     make_silent_mp3(mp3, duration_seconds=expected)
     aac = tmp_path / "test.m4a"
 
-    duration = convert_mp3_to_aac(mp3, aac, _FFMPEG)
+    duration = convert_mp3_to_aac(mp3, aac, _FFMPEG, _FFPROBE)
 
     assert abs(duration - expected) < 0.2, \
         f"Expected duration ~{expected}s, got {duration:.3f}s"
@@ -159,14 +159,14 @@ def test_convert_mp3_to_aac_custom_bitrate_and_sample_rate(tmp_path: Path) -> No
     default_out = tmp_path / "default.m4a"
     custom_out = tmp_path / "custom.m4a"
 
-    convert_mp3_to_aac(mp3, default_out, _FFMPEG)
-    convert_mp3_to_aac(mp3, custom_out, _FFMPEG, bitrate="32k", sample_rate=22050)
+    convert_mp3_to_aac(mp3, default_out, _FFMPEG, _FFPROBE)
+    convert_mp3_to_aac(mp3, custom_out, _FFMPEG, _FFPROBE, bitrate="32k", sample_rate=22050)
 
     assert custom_out.stat().st_size < default_out.stat().st_size, (
         "Lower bitrate/sample-rate output should be smaller than default"
     )
     # Duration should still be approximately correct regardless of encoding settings
-    duration = convert_mp3_to_aac(mp3, tmp_path / "check.m4a", _FFMPEG, bitrate="32k", sample_rate=22050)
+    duration = convert_mp3_to_aac(mp3, tmp_path / "check.m4a", _FFMPEG, _FFPROBE, bitrate="32k", sample_rate=22050)
     assert abs(duration - 3.0) < 0.2, f"Expected ~3.0s, got {duration:.3f}s"
 
 
@@ -176,7 +176,7 @@ def test_audio_error_on_invalid_input(tmp_path: Path) -> None:
     aac = tmp_path / "output.m4a"
 
     with pytest.raises(AudioError):
-        convert_mp3_to_aac(mp3, aac, _FFMPEG)
+        convert_mp3_to_aac(mp3, aac, _FFMPEG, _FFPROBE)
 
 
 # ---------------------------------------------------------------------------
