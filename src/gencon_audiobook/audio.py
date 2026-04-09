@@ -82,8 +82,11 @@ def _ffmeta_escape(value: str) -> str:
     return value
 
 
+_SUBPROCESS_TIMEOUT = 600  # 10 minutes — generous for large conference builds
+
+
 def _run(cmd: list[str], label: str) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess command, raising AudioError on non-zero exit.
+    """Run a subprocess command, raising AudioError on non-zero exit or timeout.
 
     Args:
         cmd: Command list to run.
@@ -93,10 +96,23 @@ def _run(cmd: list[str], label: str) -> subprocess.CompletedProcess[str]:
         CompletedProcess result.
 
     Raises:
-        AudioError: if the command exits with a non-zero return code.
+        AudioError: if the command exits with a non-zero return code or times out.
     """
     logger.debug("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise AudioError(
+            f"{label} timed out after {_SUBPROCESS_TIMEOUT}s. "
+            f"The ffmpeg process was killed. Try with fewer talks or check for corrupt MP3 files."
+        )
     if result.returncode != 0:
         raise AudioError(
             f"{label} failed (exit {result.returncode}).\n"

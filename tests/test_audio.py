@@ -341,6 +341,29 @@ def test_ffmeta_escape_plain_string_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _run — timeout and error handling
+# ---------------------------------------------------------------------------
+
+
+def test_run_raises_audio_error_on_timeout() -> None:
+    """TimeoutExpired from subprocess must surface as AudioError with a useful message."""
+    from unittest.mock import patch
+    from gencon_audiobook.audio import _run
+    import subprocess
+
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=600)):
+        try:
+            _run(["ffmpeg", "-version"], label="test operation")
+            assert False, "Expected AudioError to be raised"
+        except Exception as exc:
+            from gencon_audiobook.audio import AudioError
+            assert isinstance(exc, AudioError), f"Expected AudioError, got {type(exc)}"
+            assert "timed out" in str(exc).lower(), (
+                f"Error message should mention 'timed out': {exc}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # _write_ffmetadata — edge cases
 # ---------------------------------------------------------------------------
 
