@@ -55,30 +55,7 @@ gencon-audiobook --bitrate 32k --sample-rate 22050
 gencon-audiobook --verbose
 ```
 
-### All options
-
-| Option | Default | Description |
-|---|---|---|
-| `--output DIR` | `~/gencon-audiobook` | Directory to save output files |
-| `--conference TEXT` | Most recent | Conference to download, e.g. `"April 2024"` |
-| `--audiobook-only` | off | Produce only the m4b, skip epub |
-| `--epub-only` | off | Produce only the epub, skip audiobook |
-| `--overwrite` | off | Rebuild existing output files instead of skipping |
-| `--bitrate TEXT` | Match source | AAC encoding bitrate override (e.g. `32k`, `64k`, `128k`) |
-| `--sample-rate INT` | Match source | Audio sample rate override in Hz (e.g. `22050`, `44100`) |
-| `--verbose` | off | Enable DEBUG-level console output |
-| `--version` | | Show version and exit |
-
-### File size guide
-
-By default the tool matches the source MP3 quality. File size depends on what the Church site provides for that conference.
-
-| Bitrate | Sample rate | Approximate size | Notes |
-|---|---|---|---|
-| 128k | 44100 | ~380 MB | Recent conferences (2025+) |
-| 64k | 44100 | ~190 MB | Override: `--bitrate 64k` |
-| 32k | 44100 | ~95 MB | Older conferences (pre-2025) |
-| 32k | 22050 | ~80 MB | Override: `--bitrate 32k --sample-rate 22050` |
+For the full options reference, file size guide, and platform compatibility notes, see the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide).
 
 ---
 
@@ -99,46 +76,10 @@ Running the tool a second time skips files that already exist. Use `--overwrite`
 
 ---
 
-## Platform support
-
-### Audiobook (m4b)
-
-| Platform | App | Notes |
-|---|---|---|
-| iOS | Apple Books, Overcast, Bound, BookPlayer | Native support, chapters work |
-| Android | Smart AudioBook Player, Sirin Audiobook Player | The default music app and Google Play Books do **not** support m4b — a dedicated audiobook app is required |
-| macOS | Apple Books, VLC | Apple Books shows chapters; VLC plays audio but ignores chapters |
-| Windows | iTunes / Apple Music, VLC | Same as macOS |
-
-### EPUB
-
-| Platform | App | Notes |
-|---|---|---|
-| iOS / macOS | Apple Books | Native support |
-| Android | Google Play Books, Moon+ Reader, ReadEra | Google Play Books is built in |
-| Kindle | Send to Kindle | Amazon auto-converts epub to AZW3 |
-| Desktop | Calibre, Thorium Reader | Calibre is the reference tool for validation |
-
----
-
-## Disk space
-
-Approximately **500 MB** of working space is needed during a full download and build:
-
-- MP3 downloads: ~250 MB
-- Finished m4b: ~190 MB
-- Finished epub: ~15 MB
-
-Downloaded files persist after the build. Running with `--audiobook-only` or `--epub-only` reduces peak disk usage.
-
----
-
 ## Documentation
 
-Full documentation is available on the [project wiki](https://github.com/XeroIP/gencon-audiobook/wiki):
-
-- [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) — step-by-step install and usage guide, written for beginners
-- [Listening/Reading Guide](https://github.com/XeroIP/gencon-audiobook/wiki/Listening-Reading-Guide) — how to use the output files on every platform (no technical knowledge required)
+- [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) — full options reference, file size guide, platform support, troubleshooting
+- [Listening/Reading Guide](https://github.com/XeroIP/gencon-audiobook/wiki/Listening-Reading-Guide) — how to open the output files on every platform
 - [Architecture](https://github.com/XeroIP/gencon-audiobook/wiki/Architecture) — codebase structure for contributors
 - [Technical Decisions](https://github.com/XeroIP/gencon-audiobook/wiki/Technical-Decisions) — design choices with rationale
 
@@ -159,9 +100,6 @@ pytest tests/test_scraper_live.py -v -m live
 
 # Run full end-to-end integration test (requires ffmpeg)
 pytest tests/test_integration.py -v -m integration
-
-# Coverage report
-pytest --cov=gencon_audiobook --cov-report=term-missing
 ```
 
 ### Project layout
