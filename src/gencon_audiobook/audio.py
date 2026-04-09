@@ -55,7 +55,7 @@ def _run(cmd: list[str], label: str) -> subprocess.CompletedProcess[str]:
         AudioError: if the command exits with a non-zero return code.
     """
     logger.debug("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise AudioError(
             f"{label} failed (exit {result.returncode}).\n"
