@@ -72,6 +72,7 @@ For the full options reference, file size guide, and platform compatibility note
     cover.jpg                            # Conference cover image
     audio/                               # Downloaded MP3 files
     speakers/                            # Speaker photos
+    gencon-audiobook.log                 # Full DEBUG log for troubleshooting
 ```
 
 Running the tool a second time skips files that already exist. Use `--overwrite` to rebuild.
@@ -118,12 +119,14 @@ src/gencon_audiobook/
   utils.py          sanitize_filename(), validate_url()
 
 tests/
+  conftest.py             Shared helpers (ffmpeg discovery, silent MP3, JPEG)
   test_scraper.py         Unit tests against saved HTML fixtures
   test_downloader.py      Mocked HTTP tests
   test_audio.py           Audio pipeline with generated silent fixtures
   test_epub.py            EPUB structure and content validation
   test_cli.py             CLI behavior (all external calls mocked)
   test_utils.py           Filename sanitization and URL validation
+  test_ffmpeg_manager.py  ffmpeg/ffprobe discovery and caching
   test_scraper_live.py    Live smoke tests (@pytest.mark.live)
   test_integration.py     End-to-end test (@pytest.mark.integration)
   fixtures/               Saved HTML snapshots for scraper unit tests
