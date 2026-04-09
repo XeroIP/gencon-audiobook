@@ -8,6 +8,10 @@ on:
     - cron: "0 8 * * 1"   # Every Monday at 08:00 UTC
   workflow_dispatch:        # Allow manual trigger from the Actions UI
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   live:
     name: Live scraper smoke test
