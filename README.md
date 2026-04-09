@@ -145,7 +145,7 @@ Downloaded files persist after the build. Running with `--audiobook-only` or `--
 Full documentation is available on the [project wiki](https://github.com/XeroIP/gencon-audiobook/wiki):
 
 - [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) — step-by-step install and usage guide, written for beginners
-- [Listening Guide](https://github.com/XeroIP/gencon-audiobook/wiki/Listening-Guide) — how to use the output files on every platform (no technical knowledge required)
+- [Listening/Reading Guide](https://github.com/XeroIP/gencon-audiobook/wiki/Listening-Reading-Guide) — how to use the output files on every platform (no technical knowledge required)
 - [Architecture](https://github.com/XeroIP/gencon-audiobook/wiki/Architecture) — codebase structure for contributors
 - [Technical Decisions](https://github.com/XeroIP/gencon-audiobook/wiki/Technical-Decisions) — design choices with rationale
 
