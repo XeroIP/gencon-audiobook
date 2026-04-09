@@ -19,11 +19,9 @@ from rich.progress import (
 )
 
 from .models import Conference, Talk
-from .utils import sanitize_filename, validate_url
+from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
-
-_USER_AGENT = "gencon-audiobook/0.1.0 (open source; github.com/XeroIP/gencon-audiobook)"
 
 
 class DownloadError(Exception):
@@ -207,7 +205,7 @@ def cleanup_tmp_files(directory: Path) -> None:
 def _make_session() -> requests.Session:
     """Create a requests.Session with the project User-Agent."""
     session = requests.Session()
-    session.headers.update({"User-Agent": _USER_AGENT})
+    session.headers.update({"User-Agent": USER_AGENT})
     return session
 
 

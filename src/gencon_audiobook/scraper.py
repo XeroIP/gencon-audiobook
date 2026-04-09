@@ -16,7 +16,7 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from .models import Conference, Session, Talk
-from .utils import validate_url
+from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +27,6 @@ _REQUEST_DELAY = 0.5
 _CONNECT_TIMEOUT = 15
 _READ_TIMEOUT = 30
 _MAX_RETRIES = 3
-
-_USER_AGENT = "gencon-audiobook/0.1.0 (open source; github.com/XeroIP/gencon-audiobook)"
 
 # Matches /study/general-conference/YYYY/MM (conference listing URL)
 # Allows trailing query strings like ?lang=eng
@@ -93,7 +91,7 @@ def _check_robots(http: requests.Session, url: str) -> None:
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     parser = _get_robots(http, base)
-    if parser is not None and not parser.can_fetch(_USER_AGENT, url):
+    if parser is not None and not parser.can_fetch(USER_AGENT, url):
         raise ScraperError(
             f"URL disallowed by robots.txt: {url}. "
             "If you believe this is an error, open a GitHub issue: "
@@ -130,7 +128,7 @@ class ScraperError(Exception):
 def _make_http_session() -> requests.Session:
     """Create a requests.Session with the project User-Agent header."""
     session = requests.Session()
-    session.headers.update({"User-Agent": _USER_AGENT})
+    session.headers.update({"User-Agent": USER_AGENT})
     return session
 
 
