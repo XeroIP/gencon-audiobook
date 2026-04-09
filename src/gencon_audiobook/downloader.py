@@ -296,7 +296,6 @@ def download_conference(
         TimeRemainingColumn(),
     )
 
-    skipped = 0
     failed: list[str] = []
     failed_talks: list[Talk] = []
 
@@ -319,8 +318,6 @@ def download_conference(
             finally:
                 overall_progress.advance(overall_task)
 
-    if skipped:
-        logger.info("%d file(s) already up to date, skipped.", skipped)
     if failed:
         logger.warning(
             "%d file(s) failed to download and will be absent from output: %s",
