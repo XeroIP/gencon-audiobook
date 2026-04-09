@@ -44,6 +44,13 @@ _TALK_URL_RE = re.compile(r"/study/general-conference/\d{4}/\d{2}/[a-z0-9]+(?:\?
 # Cache of parsed RobotFileParser objects, keyed by scheme+host (e.g. "https://www.churchofjesuschrist.org")
 _robots_cache: dict[str, RobotFileParser | None] = {}
 
+# Scans raw bytes for <meta charset="..."> or <meta http-equiv="Content-Type" content="...charset=...">
+# Operates on bytes so it works before any decoding decision is made.
+_META_CHARSET_RE = re.compile(
+    rb'<meta[^>]+(?:charset=["\']?([a-zA-Z0-9_-]+)|content=["\'][^"\']*charset=([a-zA-Z0-9_-]+))',
+    re.IGNORECASE,
+)
+
 
 def _get_robots(http: requests.Session, base_url: str) -> RobotFileParser | None:
     """Fetch and parse robots.txt for the given base URL, with session-level caching.
@@ -127,6 +134,63 @@ def _make_http_session() -> requests.Session:
     return session
 
 
+def _decode_response(response: requests.Response) -> str:
+    """Decode an HTTP response with robust multi-language encoding detection.
+
+    Detection priority:
+    1. Charset declared in the Content-Type header (most authoritative).
+    2. Charset in an HTML <meta charset> tag, scanned from raw bytes before
+       any decoding — language-agnostic and works for all scripts.
+    3. Encoding detected by charset-normalizer / chardet (bundled with requests).
+    4. UTF-8 as a final fallback (the internet default).
+
+    Decodes with errors='replace' so a single malformed byte never crashes
+    the scraper. Replacement characters are logged at DEBUG level.
+
+    Args:
+        response: A completed requests.Response object.
+
+    Returns:
+        The response body as a decoded string.
+    """
+    content_type = response.headers.get("content-type", "")
+    if "charset=" in content_type.lower():
+        # Server declared encoding explicitly — trust it.
+        encoding: str = response.encoding or "utf-8"
+    else:
+        # No charset in headers; scan the first 4 KB of raw bytes for a meta tag.
+        head = response.content[:4096]
+        meta_match = _META_CHARSET_RE.search(head)
+        if meta_match:
+            raw_charset = meta_match.group(1) or meta_match.group(2)
+            encoding = raw_charset.decode("ascii", errors="replace")
+            logger.debug("Encoding from meta tag for %s: %s", response.url, encoding)
+        elif response.apparent_encoding:
+            # charset-normalizer / chardet statistical detection.
+            encoding = response.apparent_encoding
+            logger.debug("Encoding detected for %s: %s", response.url, encoding)
+        else:
+            encoding = "utf-8"
+
+    try:
+        text = response.content.decode(encoding, errors="replace")
+    except LookupError:
+        logger.debug(
+            "Unknown encoding %r for %s; falling back to UTF-8", encoding, response.url
+        )
+        text = response.content.decode("utf-8", errors="replace")
+
+    if "\ufffd" in text:
+        logger.debug(
+            "Replacement characters in response from %s (encoding: %s) "
+            "— some non-ASCII content may be garbled",
+            response.url,
+            encoding,
+        )
+
+    return text
+
+
 def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> str:
     """Fetch url, returning the response body as text.
 
@@ -168,7 +232,7 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
 
             response.raise_for_status()
 
-            body = response.text
+            body = _decode_response(response)
             if len(body) < 1000:
                 logger.warning("Suspiciously short response for %s (%d chars)", url, len(body))
             if "cloudflare" in body.lower() or (
