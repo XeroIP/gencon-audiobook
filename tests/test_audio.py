@@ -284,6 +284,23 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
 
     assert output.exists(), "m4b should still be produced when one MP3 is missing"
 
+    # No ghost chapter — only 2 chapters for the 2 successful talks, not 3
+    from mutagen.mp4 import MP4
+    tags = MP4(str(output))
+    chapter_count = len(tags.get("©nam") or [])
+    # Verify via ffprobe chapter count
+    import subprocess, json
+    probe = subprocess.run(
+        [str(_FFPROBE), "-v", "quiet", "-print_format", "json", "-show_chapters", str(output)],
+        capture_output=True, text=True, timeout=30,
+    )
+    data = json.loads(probe.stdout)
+    chapters = data.get("chapters", [])
+    assert len(chapters) == 2, (
+        f"Expected 2 chapters (one talk skipped), got {len(chapters)}: "
+        f"{[c.get('tags', {}).get('title') for c in chapters]}"
+    )
+
 
 # ---------------------------------------------------------------------------
 # _ffmeta_escape — pure function tests
@@ -353,7 +370,7 @@ def test_write_ffmetadata_zero_duration_logs_warning(
     )
 
     with caplog.at_level(logging.WARNING, logger="gencon_audiobook.audio"):
-        _write_ffmetadata(conference, tmp_path / "chapters.ffmeta")
+        _write_ffmetadata(conference, [talk], tmp_path / "chapters.ffmeta")
 
     assert any("duration" in r.message.lower() for r in caplog.records), \
         "Should log a WARNING mentioning 'duration' when a talk has duration_seconds=0"

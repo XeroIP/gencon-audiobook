@@ -19,7 +19,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from .models import Conference
+from .models import Conference, Talk
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -208,14 +208,18 @@ def _derive_ffprobe(ffmpeg_path: Path) -> Path:
     return ffmpeg_path.parent / f"ffprobe{suffix}"
 
 
-def _write_ffmetadata(conference: Conference, path: Path) -> None:
+def _write_ffmetadata(conference: Conference, talks: list[Talk], path: Path) -> None:
     """Write an FFMETADATA1 chapter file for the conference.
 
     Chapter times use millisecond precision (TIMEBASE=1/1000). Chapter titles
     follow the format "Talk Title -- Speaker Name".
 
+    Only the talks that were successfully converted should be passed — omitting
+    failed talks prevents ghost zero-length chapters from appearing in players.
+
     Args:
-        conference: Conference with talk.duration_seconds set on every talk.
+        conference: Conference object (used for title, year, copyright metadata).
+        talks: Successfully converted talks with duration_seconds set.
         path: Destination path for the metadata file.
 
     Raises:
@@ -238,7 +242,7 @@ def _write_ffmetadata(conference: Conference, path: Path) -> None:
     ]
 
     offset_ms = 0
-    for talk in conference.talks:
+    for talk in talks:
         if talk.duration_seconds <= 0.0:
             logger.warning(
                 "Talk %r has duration_seconds=0 — chapter timing will be wrong", talk.title
@@ -260,7 +264,7 @@ def _write_ffmetadata(conference: Conference, path: Path) -> None:
         offset_ms = end_ms
 
     path.write_text("\n".join(lines), encoding="utf-8")
-    logger.debug("Wrote FFMETADATA1 to %s (%d chapters)", path, len(conference.talks))
+    logger.debug("Wrote FFMETADATA1 to %s (%d chapters)", path, len(talks))
 
 
 def _write_concat_list(aac_paths: list[Path], path: Path) -> None:
@@ -441,6 +445,7 @@ def build_m4b(
 
     talks = conference.talks
     aac_paths: list[Path] = []
+    successful_talks: list[Talk] = []
     skipped: list[str] = []
 
     # Step 1: Auto-detect source quality unless the caller explicitly overrode it.
@@ -490,6 +495,7 @@ def build_m4b(
                 duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, bitrate, sample_rate)
                 talk.duration_seconds = duration
                 aac_paths.append(aac_path)
+                successful_talks.append(talk)
                 logger.debug("Converted %s (%.1fs)", mp3_path.name, duration)
             except AudioError as exc:
                 logger.error("AAC conversion failed for %r: %s — skipping", talk.title, exc)
@@ -513,7 +519,7 @@ def build_m4b(
         concat_path = tmp / "concat.txt"
         intermediate_aac = tmp / "intermediate.m4a"
 
-        _write_ffmetadata(conference, metadata_path)
+        _write_ffmetadata(conference, successful_talks, metadata_path)
 
         # Step 3: Concatenate all AAC files
         logger.info("Concatenating %d AAC files...", len(aac_paths))
