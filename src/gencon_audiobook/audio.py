@@ -287,8 +287,9 @@ def _write_concat_list(aac_paths: list[Path], path: Path) -> None:
     """Write an ffmpeg concat demuxer file listing all AAC files.
 
     Uses forward-slash paths — ffmpeg accepts them on all platforms including Windows.
-    Filenames produced by sanitize_filename() contain only [a-zA-Z0-9 ._-] so no
-    single-quote escaping is needed.
+    Filenames produced by sanitize_filename() contain only [a-zA-Z0-9 ._-], but the
+    parent directory path (e.g., the user's home dir) may contain single quotes.
+    Single quotes are escaped as '\\'' for the ffmpeg concat demuxer format.
 
     Args:
         aac_paths: Ordered list of AAC file paths to concatenate.
@@ -296,7 +297,8 @@ def _write_concat_list(aac_paths: list[Path], path: Path) -> None:
     """
     lines = []
     for p in aac_paths:
-        forward = str(p.resolve()).replace("\\", "/")
+        # Replace backslashes first, then escape any single quotes in the full path.
+        forward = str(p.resolve()).replace("\\", "/").replace("'", "'\\''")
         lines.append(f"file '{forward}'")
     path.write_text("\n".join(lines), encoding="utf-8")
     logger.debug("Wrote concat list to %s (%d files)", path, len(aac_paths))
