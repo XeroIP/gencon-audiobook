@@ -10,6 +10,15 @@ import unicodedata
 from pathlib import Path
 
 from mutagen.mp4 import MP4
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from .models import Conference
 from .utils import sanitize_filename
@@ -380,22 +389,36 @@ def build_m4b(
 
     # Step 1: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
-    for talk in talks:
-        mp3_path = audio_dir / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
-        if not mp3_path.exists():
-            logger.warning("MP3 not found for talk %r (%s) — skipping", talk.title, mp3_path)
-            skipped.append(talk.title)
-            continue
+    progress = Progress(
+        SpinnerColumn(),
+        MofNCompleteColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+    )
+    with progress:
+        task = progress.add_task("Converting to AAC", total=len(talks))
+        for talk in talks:
+            progress.update(task, description=talk.title[:60])
+            mp3_path = audio_dir / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
+            if not mp3_path.exists():
+                logger.warning("MP3 not found for talk %r (%s) — skipping", talk.title, mp3_path)
+                skipped.append(talk.title)
+                progress.advance(task)
+                continue
 
-        aac_path = mp3_path.with_suffix(".m4a")
-        try:
-            duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, bitrate, sample_rate)
-            talk.duration_seconds = duration
-            aac_paths.append(aac_path)
-            logger.debug("Converted %s (%.1fs)", mp3_path.name, duration)
-        except AudioError as exc:
-            logger.error("AAC conversion failed for %r: %s — skipping", talk.title, exc)
-            skipped.append(talk.title)
+            aac_path = mp3_path.with_suffix(".m4a")
+            try:
+                duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, bitrate, sample_rate)
+                talk.duration_seconds = duration
+                aac_paths.append(aac_path)
+                logger.debug("Converted %s (%.1fs)", mp3_path.name, duration)
+            except AudioError as exc:
+                logger.error("AAC conversion failed for %r: %s — skipping", talk.title, exc)
+                skipped.append(talk.title)
+            finally:
+                progress.advance(task)
 
     if not aac_paths:
         raise AudioError(
