@@ -38,6 +38,11 @@ dev = [
     "pip-audit>=2.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/XeroIP/gencon-audiobook"
+Repository = "https://github.com/XeroIP/gencon-audiobook"
+"Bug Tracker" = "https://github.com/XeroIP/gencon-audiobook/issues"
+
 [project.scripts]
 gencon-audiobook = "gencon_audiobook.cli:main"
 
