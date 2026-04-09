@@ -149,6 +149,25 @@ def test_sanitize_transcript_self_closes_void_elements() -> None:
     assert "<br/>" in result or "<br />" in result, f"Expected self-closed br, got: {result!r}"
 
 
+def test_sanitize_transcript_strips_data_uri_href() -> None:
+    """data: URIs in href attributes must be removed — they can embed active content."""
+    html = '<p><a href="data:text/html,<script>alert(1)</script>">click</a></p>'
+    result = _sanitize_transcript(html)
+    assert "data:" not in result, (
+        f"data: URI should be stripped from href, got: {result!r}"
+    )
+    assert "click" in result, "Link text should be preserved even when href is stripped"
+
+
+def test_sanitize_transcript_strips_data_uri_src() -> None:
+    """data: URIs in src attributes must also be removed."""
+    html = '<p><img src="data:image/png;base64,abc123" alt="img"/></p>'
+    result = _sanitize_transcript(html)
+    assert "data:" not in result, (
+        f"data: URI should be stripped from src, got: {result!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # build_epub — basic structure
 # ---------------------------------------------------------------------------
