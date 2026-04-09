@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from gencon_audiobook.audio import AudioError, build_m4b, convert_mp3_to_aac
+from gencon_audiobook.audio import AudioError, _ascii_safe, build_m4b, convert_mp3_to_aac
 from gencon_audiobook.models import Conference, Session, Talk
 
 
@@ -94,6 +94,32 @@ def _make_conference(tmp_path: Path, n_talks: int = 3, duration: float = 2.0) ->
         sessions=[session],
         conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
     )
+
+
+# ---------------------------------------------------------------------------
+# _ascii_safe
+# ---------------------------------------------------------------------------
+
+
+def test_ascii_safe_replaces_em_dash() -> None:
+    assert _ascii_safe("Tithing\u2014Putting God First") == "Tithing-Putting God First"
+
+
+def test_ascii_safe_replaces_curly_quotes() -> None:
+    assert _ascii_safe("\u201cHere Am I\u201d") == '"Here Am I"'
+
+
+def test_ascii_safe_replaces_right_single_quote() -> None:
+    assert _ascii_safe("Savior\u2019s Love") == "Savior's Love"
+
+
+def test_ascii_safe_strips_diacritics() -> None:
+    assert _ascii_safe("G\u00e9rald Caus\u00e9") == "Gerald Cause"
+
+
+def test_ascii_safe_plain_ascii_unchanged() -> None:
+    result = _ascii_safe("Plain ASCII title -- Speaker Name")
+    assert result == "Plain ASCII title -- Speaker Name"
 
 
 # ---------------------------------------------------------------------------

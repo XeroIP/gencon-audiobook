@@ -6,6 +6,7 @@ import json
 import logging
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 
 from mutagen.mp4 import MP4
@@ -23,6 +24,38 @@ class AudioError(Exception):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+_TYPOGRAPHIC_REPLACEMENTS: dict[str, str] = {
+    "\u2014": "-",   # em dash
+    "\u2013": "-",   # en dash
+    "\u2012": "-",   # figure dash
+    "\u201c": '"',   # left double quotation mark
+    "\u201d": '"',   # right double quotation mark
+    "\u2018": "'",   # left single quotation mark
+    "\u2019": "'",   # right single quotation mark
+    "\u2026": "...", # horizontal ellipsis
+    "\u00a0": " ",   # non-breaking space
+}
+
+
+def _ascii_safe(text: str) -> str:
+    """Normalize text to ASCII for FFMETADATA1 compatibility.
+
+    FFMETADATA1 files must contain ASCII-only text to avoid encoding conflicts
+    between ffmpeg's system-codepage file reading and the MP4 container's UTF-8
+    requirement. Common typographic characters are replaced with ASCII equivalents;
+    remaining non-ASCII characters have diacritics stripped via NFKD decomposition.
+
+    Args:
+        text: Input string, possibly containing non-ASCII characters.
+
+    Returns:
+        ASCII-safe version of the string.
+    """
+    for char, replacement in _TYPOGRAPHIC_REPLACEMENTS.items():
+        text = text.replace(char, replacement)
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
 def _ffmeta_escape(value: str) -> str:
@@ -148,7 +181,10 @@ def _write_ffmetadata(conference: Conference, path: Path) -> None:
             )
         start_ms = offset_ms
         end_ms = offset_ms + int(talk.duration_seconds * 1000)
-        chapter_title = f"{talk.title} -- {talk.speaker}"
+        # Normalize to ASCII: ffmpeg reads FFMETADATA1 using the system codepage on
+        # Windows, but the MP4 container requires UTF-8. ASCII is valid in both, so
+        # using ASCII-only chapter titles avoids the conflict entirely.
+        chapter_title = _ascii_safe(f"{talk.title} -- {talk.speaker}")
         lines += [
             "[CHAPTER]",
             "TIMEBASE=1/1000",
@@ -159,12 +195,7 @@ def _write_ffmetadata(conference: Conference, path: Path) -> None:
         ]
         offset_ms = end_ms
 
-    # Write as cp1252: ffmpeg on Windows reads FFMETADATA1 files using the system
-    # codepage, not UTF-8. Writing UTF-8 causes mojibake for non-ASCII characters.
-    # cp1252 (not latin-1) is required because em dashes and typographic quotes
-    # (U+2014, U+201C/D, U+2018/9) live in the 0x80–0x9F range that latin-1 leaves
-    # undefined but cp1252 maps to printable characters.
-    path.write_text("\n".join(lines), encoding="cp1252", errors="replace")
+    path.write_text("\n".join(lines), encoding="utf-8")
     logger.debug("Wrote FFMETADATA1 to %s (%d chapters)", path, len(conference.talks))
 
 
