@@ -322,6 +322,7 @@ def convert_mp3_to_aac(
         [
             str(ffmpeg_path),
             "-i", str(mp3_path),
+            "-vn",          # strip embedded cover art / video streams from the MP3
             "-c:a", "aac",
             "-b:a", bitrate,
             "-ar", str(sample_rate),
