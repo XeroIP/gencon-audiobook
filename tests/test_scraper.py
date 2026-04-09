@@ -7,11 +7,16 @@ or after the Church website structure changes.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+import responses as responses_lib
 
 from gencon_audiobook.scraper import (
     ScraperError,
+    _check_robots,
+    _get_robots,
+    _robots_cache,
     parse_conference_archive,
     parse_conference_listing,
     parse_talk_page,
@@ -206,3 +211,87 @@ def test_parse_talk_page_handles_missing_transcript_gracefully():
     """
     data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
     assert data["transcript_html"] is None
+
+
+# ---------------------------------------------------------------------------
+# robots.txt (#23)
+# ---------------------------------------------------------------------------
+
+
+def _make_http_session(robots_text: str, status: int = 200) -> MagicMock:
+    """Build a mock requests.Session whose .get() returns the given robots.txt body."""
+    mock_response = MagicMock()
+    mock_response.status_code = status
+    mock_response.text = robots_text
+    mock_response.raise_for_status.return_value = None  # no-op — 200 OK
+
+    session = MagicMock()
+    session.get.return_value = mock_response
+    return session
+
+
+def test_check_robots_allows_permitted_url() -> None:
+    """A URL permitted by robots.txt must not raise."""
+    robots_text = "User-agent: *\nDisallow: /private/\n"
+    http = _make_http_session(robots_text)
+
+    base = "https://www.churchofjesuschrist.org"
+    # Clear cache so this test's mock is used
+    _robots_cache.pop(base, None)
+
+    # Should not raise
+    _check_robots(http, f"{base}/study/general-conference/2024/04")
+
+
+def test_check_robots_raises_on_disallowed_url() -> None:
+    """A URL explicitly disallowed by robots.txt must raise ScraperError."""
+    robots_text = "User-agent: *\nDisallow: /study/general-conference/\n"
+    http = _make_http_session(robots_text)
+
+    base = "https://www.churchofjesuschrist.org"
+    _robots_cache.pop(base, None)
+
+    with pytest.raises(ScraperError, match="disallowed by robots.txt"):
+        _check_robots(http, f"{base}/study/general-conference/2024/04")
+
+
+def test_get_robots_returns_none_on_fetch_failure() -> None:
+    """If robots.txt fetch fails, _get_robots returns None (proceed anyway)."""
+    session = MagicMock()
+    session.get.side_effect = ConnectionError("network error")
+
+    base = "https://www.churchofjesuschrist.org"
+    _robots_cache.pop(base, None)
+
+    result = _get_robots(session, base)
+    assert result is None, "Should return None when robots.txt is unreachable"
+
+
+def test_check_robots_proceeds_when_robots_unreachable() -> None:
+    """If robots.txt cannot be fetched, _check_robots should not raise."""
+    session = MagicMock()
+    session.get.side_effect = ConnectionError("network error")
+
+    base = "https://www.churchofjesuschrist.org"
+    _robots_cache.pop(base, None)
+
+    # Should not raise even though the fetch failed
+    _check_robots(session, f"{base}/study/general-conference/2024/04")
+
+
+def test_get_robots_caches_result() -> None:
+    """_get_robots should only call session.get once per base URL (caching)."""
+    robots_text = "User-agent: *\nDisallow:\n"
+    http = _make_http_session(robots_text)
+
+    base = "https://www.example-cache-test.org"
+    _robots_cache.pop(base, None)
+
+    _get_robots(http, base)
+    _get_robots(http, base)
+
+    assert http.get.call_count == 1, \
+        f"robots.txt should be fetched once and cached, got {http.get.call_count} calls"
+
+    # Cleanup
+    _robots_cache.pop(base, None)

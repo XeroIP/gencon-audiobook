@@ -6,6 +6,8 @@ import logging
 import sys
 from pathlib import Path
 
+_LOG_FILENAME = "gencon-audiobook.log"
+
 import click
 
 from . import __version__
@@ -29,8 +31,29 @@ def _setup_logging(verbose: bool) -> None:
     formatter = logging.Formatter("%(levelname)s: %(message)s")
     handler.setFormatter(formatter)
     root = logging.getLogger()
-    root.setLevel(level)
+    root.setLevel(logging.DEBUG)  # root at DEBUG so file handler captures everything
     root.addHandler(handler)
+
+
+def _add_file_logging(log_dir: Path) -> None:
+    """Add a DEBUG-level file handler writing to log_dir/gencon-audiobook.log.
+
+    Always writes at DEBUG level regardless of --verbose, so users have a full
+    trace available for troubleshooting without re-running with --verbose.
+
+    Args:
+        log_dir: Directory to write the log file into. Created if it does not exist.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / _LOG_FILENAME
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    ))
+    logging.getLogger().addHandler(file_handler)
+    logger.debug("Debug log: %s", log_path)
 
 
 def _select_conference(conference_filter: str | None) -> tuple[str, str]:
@@ -164,6 +187,7 @@ def main(
         sys.exit(1)
 
     conf_output_dir = output_dir / conf_obj.title
+    _add_file_logging(conf_output_dir)
 
     # Download audio and images
     click.echo(f"Downloading {len(conf_obj.talks)} talks...")
@@ -187,20 +211,23 @@ def main(
         cover_path = conf_output_dir / "cover.jpg"
         m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
 
-        try:
-            build_m4b(
-                conference=conf_obj,
-                audio_dir=audio_dir,
-                output_path=m4b_path,
-                cover_path=cover_path if cover_path.exists() else None,
-                ffmpeg_path=ffmpeg,
-                ffprobe_path=ffprobe,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-            )
-        except AudioError as exc:
-            click.echo(f"Audiobook build error: {exc}", err=True)
-            sys.exit(1)
+        if m4b_path.exists() and not overwrite:
+            click.echo(f"Audiobook already exists (use --overwrite to rebuild): {m4b_path.name}")
+        else:
+            try:
+                build_m4b(
+                    conference=conf_obj,
+                    audio_dir=audio_dir,
+                    output_path=m4b_path,
+                    cover_path=cover_path if cover_path.exists() else None,
+                    ffmpeg_path=ffmpeg,
+                    ffprobe_path=ffprobe,
+                    bitrate=bitrate,
+                    sample_rate=sample_rate,
+                )
+            except AudioError as exc:
+                click.echo(f"Audiobook build error: {exc}", err=True)
+                sys.exit(1)
 
         click.echo("")
         click.echo(f"Output saved to: {conf_output_dir}")

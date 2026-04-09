@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from gencon_audiobook.audio import AudioError
-from gencon_audiobook.cli import main
+from gencon_audiobook.cli import main, _LOG_FILENAME
 from gencon_audiobook.downloader import DownloadError
 from gencon_audiobook.models import Conference, Session, Talk
 from gencon_audiobook.scraper import ConferenceRef, ScraperError
@@ -258,3 +259,97 @@ def test_completion_summary_printed(tmp_path: Path) -> None:
         result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
 
     assert "Output saved to" in result.output, result.output
+
+
+# ---------------------------------------------------------------------------
+# --overwrite
+# ---------------------------------------------------------------------------
+
+
+def test_overwrite_flag_skips_build_when_m4b_exists(tmp_path: Path) -> None:
+    """Without --overwrite, build_m4b should not be called if the m4b already exists."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    # Pre-create the m4b so the skip check triggers
+    m4b_path = tmp_path / "April 2024 General Conference" / "April 2024 General Conference.m4b"
+    m4b_path.parent.mkdir(parents=True)
+    m4b_path.write_bytes(b"\x00" * 1024)
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_build,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
+
+    assert result.exit_code == 0, result.output
+    mock_build.assert_not_called()
+    assert "--overwrite" in result.output, \
+        "Skip message should mention --overwrite so the user knows how to rebuild"
+
+
+def test_overwrite_flag_rebuilds_when_m4b_exists(tmp_path: Path) -> None:
+    """With --overwrite, build_m4b should be called even if the m4b already exists."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    m4b_path = tmp_path / "April 2024 General Conference" / "April 2024 General Conference.m4b"
+    m4b_path.parent.mkdir(parents=True)
+    m4b_path.write_bytes(b"\x00" * 1024)
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_build,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only", "--overwrite"])
+
+    assert result.exit_code == 0, result.output
+    mock_build.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Debug log file (#21)
+# ---------------------------------------------------------------------------
+
+
+def test_log_file_created_in_output_dir(tmp_path: Path) -> None:
+    """A gencon-audiobook.log file should be created in the conference output directory."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    # Isolate logging handlers so the test doesn't inherit stale handlers from other tests
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+
+    try:
+        with (
+            patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+            patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+            patch("gencon_audiobook.cli.download_conference"),
+            patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+            patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+            patch("gencon_audiobook.cli.build_m4b"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
+    finally:
+        # Remove any file handlers added during this test run to avoid leaking open handles
+        for h in root_logger.handlers[:]:
+            if h not in original_handlers:
+                h.close()
+                root_logger.removeHandler(h)
+
+    assert result.exit_code == 0, result.output
+    log_path = tmp_path / "April 2024 General Conference" / _LOG_FILENAME
+    assert log_path.exists(), \
+        f"Log file should exist at {log_path}; output dir contents: {list(log_path.parent.iterdir()) if log_path.parent.exists() else 'dir missing'}"

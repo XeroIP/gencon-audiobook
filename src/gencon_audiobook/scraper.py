@@ -9,7 +9,8 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -38,6 +39,59 @@ _DECADE_RANGE_RE = re.compile(r"/study/general-conference/(\d{4})(\d{4})$")
 
 # Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL)
 _TALK_URL_RE = re.compile(r"/study/general-conference/\d{4}/\d{2}/[a-z0-9]+(?:\?|$)", re.IGNORECASE)
+
+
+# Cache of parsed RobotFileParser objects, keyed by scheme+host (e.g. "https://www.churchofjesuschrist.org")
+_robots_cache: dict[str, RobotFileParser | None] = {}
+
+
+def _get_robots(http: requests.Session, base_url: str) -> RobotFileParser | None:
+    """Fetch and parse robots.txt for the given base URL, with session-level caching.
+
+    Args:
+        http: Requests session to use for the fetch.
+        base_url: Scheme + host (e.g. "https://www.churchofjesuschrist.org").
+
+    Returns:
+        Parsed RobotFileParser, or None if robots.txt could not be fetched.
+    """
+    if base_url in _robots_cache:
+        return _robots_cache[base_url]
+
+    robots_url = f"{base_url}/robots.txt"
+    try:
+        response = http.get(robots_url, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT))
+        response.raise_for_status()
+        parser = RobotFileParser()
+        parser.parse(response.text.splitlines())
+        _robots_cache[base_url] = parser
+        logger.debug("Fetched robots.txt from %s", robots_url)
+    except Exception as exc:
+        logger.warning("Could not fetch robots.txt from %s: %s — proceeding anyway", robots_url, exc)
+        _robots_cache[base_url] = None
+
+    return _robots_cache[base_url]
+
+
+def _check_robots(http: requests.Session, url: str) -> None:
+    """Raise ScraperError if url is disallowed by the site's robots.txt.
+
+    Args:
+        http: Requests session to use if robots.txt needs fetching.
+        url: Full URL to check.
+
+    Raises:
+        ScraperError: if the URL is explicitly disallowed for our User-Agent.
+    """
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    parser = _get_robots(http, base)
+    if parser is not None and not parser.can_fetch(_USER_AGENT, url):
+        raise ScraperError(
+            f"URL disallowed by robots.txt: {url}. "
+            "If you believe this is an error, open a GitHub issue: "
+            "github.com/XeroIP/gencon-audiobook"
+        )
 
 
 @dataclass
@@ -665,6 +719,7 @@ def fetch_available_conferences() -> list[ConferenceRef]:
     """
     http = _make_http_session()
     url = _BASE_URL + _ARCHIVE_PATH
+    _check_robots(http, url)
     html = _fetch(http, url)
     return parse_conference_archive(html)
 
@@ -686,6 +741,7 @@ def scrape_conference(conference_url: str) -> Conference:
         ScraperError: if the conference page fails or zero valid talks are found.
     """
     http = _make_http_session()
+    _check_robots(http, conference_url)
 
     # Fetch and parse conference listing
     listing_html = _fetch(http, conference_url)
