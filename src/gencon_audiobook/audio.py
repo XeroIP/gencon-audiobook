@@ -381,6 +381,7 @@ def convert_mp3_to_aac(
     mp3_path: Path,
     aac_path: Path,
     ffmpeg_path: Path,
+    ffprobe_path: Path,
     bitrate: str = "64k",
     sample_rate: int = 44100,
 ) -> float:
@@ -390,6 +391,7 @@ def convert_mp3_to_aac(
         mp3_path: Input MP3 file.
         aac_path: Output AAC file path.
         ffmpeg_path: Path to ffmpeg binary.
+        ffprobe_path: Path to ffprobe binary.
         bitrate: AAC encoding bitrate as an ffmpeg bitrate string (e.g., "64k", "32k").
         sample_rate: Output sample rate in Hz (e.g., 44100, 22050).
 
@@ -419,7 +421,6 @@ def convert_mp3_to_aac(
         label=f"MP3→AAC conversion of {mp3_path.name}",
     )
 
-    ffprobe_path = _derive_ffprobe(ffmpeg_path)
     return _get_duration_ffprobe(aac_path, ffprobe_path)
 
 
@@ -510,7 +511,7 @@ def build_m4b(
 
             aac_path = mp3_path.with_suffix(".m4a")
             try:
-                duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, bitrate, sample_rate)
+                duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, ffprobe_path, bitrate, sample_rate)
                 talk.duration_seconds = duration
                 aac_paths.append(aac_path)
                 successful_talks.append(talk)
