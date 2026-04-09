@@ -169,6 +169,7 @@ def _sanitize_transcript(raw_html: str | None) -> str:
                 or val.startswith("https://")
                 or val.startswith("//")
                 or val.startswith("javascript:")
+                or val.startswith("data:")  # data: URIs can embed arbitrary active content
             ):
                 del tag.attrs[attr]
 
