@@ -184,7 +184,8 @@ def _probe_source_quality(mp3_path: Path, ffprobe_path: Path) -> tuple[str, int]
             "— falling back to 64k/44100",
             mp3_path.name, bit_rate, sample_rate,
         )
-    except AudioError as exc:
+    except (AudioError, OSError) as exc:
+        # OSError covers FileNotFoundError when the ffprobe binary itself is missing.
         logger.warning(
             "ffprobe quality probe failed for %s: %s — falling back to 64k/44100",
             mp3_path.name, exc,
