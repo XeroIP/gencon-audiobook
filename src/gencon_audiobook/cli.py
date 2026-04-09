@@ -212,16 +212,14 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 )
 @click.option(
     "--bitrate",
-    default="64k",
-    show_default=True,
-    help="AAC encoding bitrate for the m4b (e.g., 32k, 48k, 64k).",
+    default=None,
+    help="AAC encoding bitrate (e.g., 32k, 64k, 128k). Default: match source MP3.",
 )
 @click.option(
     "--sample-rate",
-    default=44100,
-    show_default=True,
+    default=None,
     type=int,
-    help="Audio sample rate in Hz for the m4b (e.g., 22050, 44100).",
+    help="Audio sample rate in Hz (e.g., 22050, 44100). Default: match source MP3.",
 )
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
@@ -231,8 +229,8 @@ def main(
     epub_only: bool,
     verbose: bool,
     overwrite: bool,
-    bitrate: str,
-    sample_rate: int,
+    bitrate: str | None,
+    sample_rate: int | None,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _check_python_version()
@@ -262,8 +260,8 @@ def _run(
     audiobook_only: bool,
     epub_only: bool,
     overwrite: bool,
-    bitrate: str,
-    sample_rate: int,
+    bitrate: str | None,
+    sample_rate: int | None,
 ) -> None:
     """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()

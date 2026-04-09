@@ -539,3 +539,59 @@ def test_log_file_created_in_output_dir(tmp_path: Path) -> None:
     log_path = tmp_path / "April 2024 General Conference" / _LOG_FILENAME
     assert log_path.exists(), \
         f"Log file should exist at {log_path}; output dir contents: {list(log_path.parent.iterdir()) if log_path.parent.exists() else 'dir missing'}"
+
+
+# ---------------------------------------------------------------------------
+# Source quality auto-detection
+# ---------------------------------------------------------------------------
+
+
+def test_default_bitrate_passes_none_to_build_m4b(tmp_path: Path) -> None:
+    """Without --bitrate, build_m4b receives bitrate=None so it auto-detects source quality."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_m4b,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_m4b.call_args
+    assert kwargs.get("bitrate") is None, \
+        f"Expected bitrate=None (auto-detect), got {kwargs.get('bitrate')!r}"
+    assert kwargs.get("sample_rate") is None, \
+        f"Expected sample_rate=None (auto-detect), got {kwargs.get('sample_rate')!r}"
+
+
+def test_explicit_bitrate_passed_to_build_m4b(tmp_path: Path) -> None:
+    """--bitrate and --sample-rate override auto-detection when explicitly provided."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_m4b,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["--output", str(tmp_path), "--audiobook-only", "--bitrate", "48k", "--sample-rate", "22050"],
+        )
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_m4b.call_args
+    assert kwargs.get("bitrate") == "48k", \
+        f"Expected bitrate='48k', got {kwargs.get('bitrate')!r}"
+    assert kwargs.get("sample_rate") == 22050, \
+        f"Expected sample_rate=22050, got {kwargs.get('sample_rate')!r}"

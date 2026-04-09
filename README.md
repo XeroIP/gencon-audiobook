@@ -60,20 +60,21 @@ gencon-audiobook --verbose
 | `--audiobook-only` | off | Produce only the m4b, skip epub |
 | `--epub-only` | off | Produce only the epub, skip audiobook |
 | `--overwrite` | off | Rebuild existing output files instead of skipping |
-| `--bitrate TEXT` | `64k` | AAC encoding bitrate (e.g. `32k`, `48k`, `64k`) |
-| `--sample-rate INT` | `44100` | Audio sample rate in Hz (e.g. `22050`, `44100`) |
+| `--bitrate TEXT` | Match source | AAC encoding bitrate override (e.g. `32k`, `64k`, `128k`) |
+| `--sample-rate INT` | Match source | Audio sample rate override in Hz (e.g. `22050`, `44100`) |
 | `--verbose` | off | Enable DEBUG-level console output |
 | `--version` | | Show version and exit |
 
 ### File size guide
 
-The defaults (64k / 44.1 kHz) produce a ~190 MB audiobook for a full conference.
+By default the tool matches the source MP3 quality. File size depends on what the Church site provides for that conference.
 
 | Bitrate | Sample rate | Approximate size | Notes |
 |---|---|---|---|
-| 64k | 44100 | ~190 MB | Default — good quality for speech |
-| 48k | 44100 | ~145 MB | Slightly smaller, imperceptible difference |
-| 32k | 22050 | ~80 MB | Noticeably lower fidelity, fine for speech |
+| 128k | 44100 | ~380 MB | Recent conferences (2025+) |
+| 64k | 44100 | ~190 MB | Override: `--bitrate 64k` |
+| 32k | 44100 | ~95 MB | Older conferences (pre-2025) |
+| 32k | 22050 | ~80 MB | Override: `--bitrate 32k --sample-rate 22050` |
 
 ---
 

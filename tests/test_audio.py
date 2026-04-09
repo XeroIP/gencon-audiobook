@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from gencon_audiobook.audio import AudioError, _ascii_safe, build_m4b, convert_mp3_to_aac
+from gencon_audiobook.audio import AudioError, _ascii_safe, _probe_source_quality, build_m4b, convert_mp3_to_aac
 from gencon_audiobook.models import Conference, Session, Talk
 
 
@@ -437,3 +437,51 @@ def test_build_m4b_chapter_boundaries_aligned(tmp_path: Path) -> None:
         f"Last chapter end ({last_end_s:.3f}s) should be within 1s of "
         f"total m4b duration ({total_s:.3f}s); drift={total_s - last_end_s:.3f}s"
     )
+
+
+# ---------------------------------------------------------------------------
+# _probe_source_quality
+# ---------------------------------------------------------------------------
+
+
+@requires_ffmpeg
+def test_probe_source_quality_detects_bitrate(tmp_path: Path) -> None:
+    """Probe correctly extracts bitrate and sample rate from a real MP3."""
+    mp3 = tmp_path / "test.mp3"
+    assert _FFMPEG is not None
+    # Generate a 32k / 22050 Hz MP3 to verify both values are detected
+    subprocess.run(
+        [str(_FFMPEG), "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=22050",
+         "-t", "2", "-acodec", "libmp3lame", "-ab", "32k", "-y", str(mp3)],
+        check=True, capture_output=True,
+    )
+
+    bitrate, sample_rate = _probe_source_quality(mp3, _FFPROBE)
+
+    assert bitrate == "32k", f"Expected '32k', got {bitrate!r}"
+    assert sample_rate == 22050, f"Expected 22050, got {sample_rate}"
+
+
+def test_probe_source_quality_fallback_on_missing_file(tmp_path: Path) -> None:
+    """Probe returns safe defaults and logs a warning when the file doesn't exist."""
+    missing = tmp_path / "nonexistent.mp3"
+    ffprobe = Path(shutil.which("ffprobe") or "/usr/bin/ffprobe")
+
+    bitrate, sample_rate = _probe_source_quality(missing, ffprobe)
+
+    assert bitrate == "64k", f"Expected fallback '64k', got {bitrate!r}"
+    assert sample_rate == 44100, f"Expected fallback 44100, got {sample_rate}"
+
+
+@requires_ffmpeg
+def test_build_m4b_auto_detects_source_quality(tmp_path: Path) -> None:
+    """build_m4b with no explicit bitrate/sample_rate probes the source MP3."""
+    conference = _make_conference(tmp_path, n_talks=2, duration=2.0)
+    audio_dir = tmp_path / "audio"
+    output = tmp_path / "output.m4b"
+
+    # No bitrate or sample_rate passed — should auto-detect from source
+    build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    assert output.exists(), "m4b should be produced with auto-detected quality"
+    assert output.stat().st_size > 0

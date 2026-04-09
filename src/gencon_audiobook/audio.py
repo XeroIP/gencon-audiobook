@@ -137,6 +137,61 @@ def _get_duration_ffprobe(path: Path, ffprobe_path: Path) -> float:
         ) from exc
 
 
+def _probe_source_quality(mp3_path: Path, ffprobe_path: Path) -> tuple[str, int]:
+    """Detect the bitrate and sample rate of a source MP3 using ffprobe.
+
+    Used to match AAC output quality to the source rather than applying a
+    fixed default. On failure, logs a warning and returns safe defaults.
+
+    Args:
+        mp3_path: Source MP3 file to probe.
+        ffprobe_path: Path to ffprobe binary.
+
+    Returns:
+        Tuple of (bitrate_str, sample_rate_int), e.g. ("128k", 44100).
+        Falls back to ("64k", 44100) if probing fails.
+    """
+    try:
+        result = _run(
+            [
+                str(ffprobe_path),
+                "-v", "quiet",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=bit_rate,sample_rate",
+                "-of", "default=noprint_wrappers=1",
+                str(mp3_path),
+            ],
+            label=f"ffprobe quality of {mp3_path.name}",
+        )
+        bit_rate: int | None = None
+        sample_rate: int | None = None
+        for line in result.stdout.splitlines():
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            if key == "bit_rate" and val.strip().isdigit():
+                bit_rate = int(val.strip())
+            elif key == "sample_rate" and val.strip().isdigit():
+                sample_rate = int(val.strip())
+
+        if bit_rate and sample_rate:
+            # Round to nearest standard bitrate string (e.g. 128000 -> "128k")
+            bitrate_str = f"{round(bit_rate / 1000)}k"
+            return bitrate_str, sample_rate
+
+        logger.warning(
+            "Could not parse quality from %s (bit_rate=%r, sample_rate=%r) "
+            "— falling back to 64k/44100",
+            mp3_path.name, bit_rate, sample_rate,
+        )
+    except AudioError as exc:
+        logger.warning(
+            "ffprobe quality probe failed for %s: %s — falling back to 64k/44100",
+            mp3_path.name, exc,
+        )
+    return "64k", 44100
+
+
 def _derive_ffprobe(ffmpeg_path: Path) -> Path:
     """Derive the ffprobe path from the ffmpeg binary location.
 
@@ -352,30 +407,31 @@ def build_m4b(
     cover_path: Path | None,
     ffmpeg_path: Path,
     ffprobe_path: Path,
-    bitrate: str = "64k",
-    sample_rate: int = 44100,
+    bitrate: str | None = None,
+    sample_rate: int | None = None,
 ) -> None:
     """Build a chaptered m4b audiobook from downloaded MP3 files.
 
     Process:
-    1. Convert each MP3 to AAC; update talk.duration_seconds in-place.
-    2. Write an FFMETADATA1 chapter file using cumulative millisecond offsets.
-    3. Concatenate all AAC files into a single intermediate AAC.
-    4. Mux chapters, cover art, and metadata into the final m4b.
-    5. Delete intermediate AAC and temp files.
-    6. Verify the output with mutagen and ffprobe.
+    1. Probe the first MP3 to detect source bitrate/sample_rate (unless overridden).
+    2. Convert each MP3 to AAC; update talk.duration_seconds in-place.
+    3. Write an FFMETADATA1 chapter file using cumulative millisecond offsets.
+    4. Concatenate all AAC files into a single intermediate AAC.
+    5. Mux chapters, cover art, and metadata into the final m4b.
+    6. Delete intermediate AAC and temp files.
+    7. Verify the output with mutagen and ffprobe.
 
     MP3 files are located as: audio_dir / "{talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
 
     Args:
-        conference: Conference object. talk.duration_seconds is set in-place during step 1.
+        conference: Conference object. talk.duration_seconds is set in-place during step 2.
         audio_dir: Directory containing downloaded MP3 files.
         output_path: Path for the output .m4b file.
         cover_path: Optional JPEG cover art path.
         ffmpeg_path: Path to ffmpeg binary.
         ffprobe_path: Path to ffprobe binary.
-        bitrate: AAC encoding bitrate as an ffmpeg bitrate string (e.g., "64k", "32k").
-        sample_rate: Output sample rate in Hz (e.g., 44100, 22050).
+        bitrate: AAC encoding bitrate (e.g., "64k", "128k"). Defaults to source bitrate.
+        sample_rate: Output sample rate in Hz. Defaults to source sample rate.
 
     Raises:
         AudioError: if any ffmpeg step fails or no valid talks are found.
@@ -386,7 +442,29 @@ def build_m4b(
     aac_paths: list[Path] = []
     skipped: list[str] = []
 
-    # Step 1: Convert MP3 → AAC, populate duration_seconds
+    # Step 1: Auto-detect source quality unless the caller explicitly overrode it.
+    # Probe the first available MP3 — all talks in a conference come from the same
+    # source pipeline and share the same bitrate/sample_rate.
+    first_mp3 = next(
+        (
+            audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.mp3"
+            for t in talks
+            if (audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.mp3").exists()
+        ),
+        None,
+    )
+    if first_mp3 is not None:
+        detected_bitrate, detected_sample_rate = _probe_source_quality(first_mp3, ffprobe_path)
+        if bitrate is None:
+            bitrate = detected_bitrate
+        if sample_rate is None:
+            sample_rate = detected_sample_rate
+        logger.info("Source quality: %s / %d Hz", bitrate, sample_rate)
+    # Final fallback if no MP3s exist yet or probe returned nothing
+    bitrate = bitrate or "64k"
+    sample_rate = sample_rate or 44100
+
+    # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
     progress = Progress(
         MofNCompleteColumn(),
