@@ -4,12 +4,21 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gencon-audiobook"
-version = "0.1.0"
+version = "0.1.1"
 description = "Download General Conference talks as a complete audiobook (m4b) and epub with full transcripts"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "XeroIP"}]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
 
 dependencies = [
     "click>=8.0",
