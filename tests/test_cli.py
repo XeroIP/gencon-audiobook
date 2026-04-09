@@ -73,11 +73,68 @@ def test_version_flag() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_epub_only_exits_cleanly() -> None:
-    runner = CliRunner()
-    result = runner.invoke(main, ["--epub-only"])
-    assert result.exit_code == 0
-    assert "Phase 2" in result.output
+def test_epub_only_skips_audiobook(tmp_path: Path) -> None:
+    """--epub-only should build the EPUB but not call build_m4b."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_m4b") as mock_m4b,
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert result.exit_code == 0, result.output
+    mock_m4b.assert_not_called()
+    mock_epub.assert_called_once()
+
+
+def test_audiobook_only_skips_epub(tmp_path: Path) -> None:
+    """--audiobook-only should call build_m4b but not build_epub."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_m4b,
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
+
+    assert result.exit_code == 0, result.output
+    mock_m4b.assert_called_once()
+    mock_epub.assert_not_called()
+
+
+def test_default_builds_both(tmp_path: Path) -> None:
+    """With no flags, both m4b and epub should be built."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_m4b,
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    mock_m4b.assert_called_once()
+    mock_epub.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

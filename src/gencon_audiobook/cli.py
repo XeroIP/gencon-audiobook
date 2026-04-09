@@ -13,6 +13,7 @@ import click
 from . import __version__
 from .audio import AudioError, build_m4b
 from .downloader import DownloadError, download_conference
+from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
@@ -165,10 +166,6 @@ def main(
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _setup_logging(verbose)
 
-    if epub_only:
-        click.echo("epub generation coming in Phase 2.")
-        sys.exit(0)
-
     # Resolve output directory
     output_dir = Path(output).expanduser().resolve()
 
@@ -189,13 +186,16 @@ def main(
     conf_output_dir = output_dir / conf_obj.title
     _add_file_logging(conf_output_dir)
 
-    # Download audio and images
+    # Download audio (skipped for --epub-only) and images
     click.echo(f"Downloading {len(conf_obj.talks)} talks...")
     try:
-        download_conference(conf_obj, conf_output_dir, skip_audio=False)
+        download_conference(conf_obj, conf_output_dir, skip_audio=epub_only)
     except DownloadError as exc:
         click.echo(f"Download error: {exc}", err=True)
         sys.exit(1)
+
+    m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
+    epub_path = conf_output_dir / f"{conf_obj.title}.epub"
 
     # Build m4b audiobook
     if not epub_only:
@@ -209,7 +209,6 @@ def main(
 
         audio_dir = conf_output_dir / "audio"
         cover_path = conf_output_dir / "cover.jpg"
-        m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
 
         if m4b_path.exists() and not overwrite:
             click.echo(f"Audiobook already exists (use --overwrite to rebuild): {m4b_path.name}")
@@ -229,14 +228,29 @@ def main(
                 click.echo(f"Audiobook build error: {exc}", err=True)
                 sys.exit(1)
 
-        click.echo("")
-        click.echo(f"Output saved to: {conf_output_dir}")
-        if m4b_path.exists():
-            size_mb = m4b_path.stat().st_size / 1_048_576
-            chapter_count = len(conf_obj.talks)
-            click.echo(
-                f"  {m4b_path.name} ({size_mb:.0f} MB, {chapter_count} chapters)"
-            )
-    else:
-        click.echo("")
-        click.echo(f"Output saved to: {conf_output_dir}")
+    # Build EPUB companion
+    if not audiobook_only:
+        click.echo("Building epub...")
+        if epub_path.exists() and not overwrite:
+            click.echo(f"EPUB already exists (use --overwrite to rebuild): {epub_path.name}")
+        else:
+            try:
+                build_epub(
+                    conference=conf_obj,
+                    images_dir=conf_output_dir,
+                    output_path=epub_path,
+                )
+            except EpubError as exc:
+                click.echo(f"EPUB build error: {exc}", err=True)
+                sys.exit(1)
+
+    click.echo("")
+    click.echo(f"Output saved to: {conf_output_dir}")
+    if m4b_path.exists():
+        size_mb = m4b_path.stat().st_size / 1_048_576
+        chapter_count = len(conf_obj.talks)
+        click.echo(f"  {m4b_path.name} ({size_mb:.0f} MB, {chapter_count} chapters)")
+    if epub_path.exists():
+        size_mb = epub_path.stat().st_size / 1_048_576
+        talk_count = len(conf_obj.talks)
+        click.echo(f"  {epub_path.name} ({size_mb:.1f} MB, {talk_count} talks)")
