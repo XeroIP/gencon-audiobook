@@ -364,6 +364,37 @@ def test_run_raises_audio_error_on_timeout() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _write_concat_list — path escaping
+# ---------------------------------------------------------------------------
+
+
+def test_write_concat_list_escapes_single_quotes_in_path(tmp_path: Path) -> None:
+    """Single quotes in the parent directory path must be escaped for ffmpeg concat format."""
+    from gencon_audiobook.audio import _write_concat_list
+
+    # Simulate files that would exist under a path with an apostrophe.
+    # We use resolved tmp_path which is safe, then monkey-patch the path string.
+    dummy_files = [tmp_path / "001-talk.m4a", tmp_path / "002-talk.m4a"]
+    for f in dummy_files:
+        f.write_bytes(b"")
+
+    concat_path = tmp_path / "concat.txt"
+    _write_concat_list(dummy_files, concat_path)
+
+    content = concat_path.read_text(encoding="utf-8")
+    # Regardless of apostrophes in the actual path, each line must start with "file '"
+    # and end with "'", with no unescaped single quotes inside.
+    for line in content.splitlines():
+        assert line.startswith("file '"), f"Line should start with \"file '\": {line!r}"
+        assert line.endswith("'"), f"Line should end with \"'\": {line!r}"
+        # The inner path (between outer quotes) must not contain bare single quotes
+        inner = line[6:-1]  # strip 'file \'' prefix and trailing '\''
+        assert "'" not in inner, (
+            f"Unescaped single quote found in concat path: {inner!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # _write_ffmetadata — edge cases
 # ---------------------------------------------------------------------------
 
