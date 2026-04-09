@@ -1,4 +1,4 @@
-"""Filename sanitization and URL validation utilities."""
+"""Filename sanitization, URL validation, and shared HTTP session utilities."""
 
 from __future__ import annotations
 
@@ -6,7 +6,17 @@ import logging
 import re
 from urllib.parse import urlparse
 
+from . import __version__
+
 logger = logging.getLogger(__name__)
+
+# Single source of truth for the User-Agent string sent with every HTTP request.
+# Both scraper.py and downloader.py import this constant so version updates
+# only need to happen in one place (__version__ in __init__.py).
+USER_AGENT = (
+    f"gencon-audiobook/{__version__}"
+    " (open source; github.com/XeroIP/gencon-audiobook)"
+)
 
 _SAFE_CHARS = re.compile(r"[^a-zA-Z0-9 ._-]")
 _MULTI_UNDERSCORE = re.compile(r"_+")
