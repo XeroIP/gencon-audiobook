@@ -220,13 +220,29 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
             logger.debug("Fetching: %s", url)
             response = http.get(url, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT))
 
-            if response.status_code in (403, 429):
+            if response.status_code == 403:
+                # 403 is a permanent block — do not retry.
                 raise ScraperError(
-                    f"Access was blocked (HTTP {response.status_code}). "
+                    "Access was blocked (HTTP 403). "
                     "The website may be blocking automated access. "
                     "Try again later or open a GitHub issue if this persists: "
                     "github.com/XeroIP/gencon-audiobook"
                 )
+
+            if response.status_code == 429:
+                # 429 is a transient rate-limit signal — respect Retry-After if present,
+                # otherwise fall through to raise_for_status() which triggers the retry loop.
+                retry_after = response.headers.get("Retry-After")
+                if retry_after is not None:
+                    try:
+                        wait_override = int(retry_after)
+                        logger.warning(
+                            "Rate limited (HTTP 429). Retry-After: %ds — waiting before retry.",
+                            wait_override,
+                        )
+                        time.sleep(wait_override)
+                    except ValueError:
+                        pass  # non-integer Retry-After (date format) — ignore, let backoff handle it
 
             response.raise_for_status()
 

@@ -16,6 +16,7 @@ from gencon_audiobook.scraper import (
     ScraperError,
     _check_robots,
     _get_robots,
+    _make_http_session as _scraper_make_session,
     _robots_cache,
     parse_conference_archive,
     parse_conference_listing,
@@ -295,3 +296,46 @@ def test_get_robots_caches_result() -> None:
 
     # Cleanup
     _robots_cache.pop(base, None)
+
+
+# ---------------------------------------------------------------------------
+# _fetch — 429 retry behaviour
+# ---------------------------------------------------------------------------
+
+
+@responses_lib.activate
+def test_fetch_retries_on_429_then_succeeds() -> None:
+    """A 429 response should trigger retry; a subsequent 200 should succeed."""
+    from gencon_audiobook.scraper import _fetch
+
+    url = "https://www.churchofjesuschrist.org/study/general-conference"
+    minimal_html = "<html><body>" + "x" * 1200 + "</body></html>"
+
+    responses_lib.add(responses_lib.GET, url, status=429, body="Too Many Requests")
+    responses_lib.add(responses_lib.GET, url, status=200, body=minimal_html)
+
+    session = _scraper_make_session()
+    # Patch time.sleep to avoid real delays in the test
+    with patch("gencon_audiobook.scraper.time.sleep"):
+        result = _fetch(session, url)
+
+    assert len(result) > 100, f"Expected page content after retry, got: {result[:100]!r}"
+
+
+@responses_lib.activate
+def test_fetch_403_raises_immediately_without_retry() -> None:
+    """A 403 response must raise ScraperError immediately, not be retried."""
+    from gencon_audiobook.scraper import _fetch
+
+    url = "https://www.churchofjesuschrist.org/study/general-conference"
+    responses_lib.add(responses_lib.GET, url, status=403, body="Forbidden")
+    # Only one response registered — if retry occurs, responses_lib raises ConnectionError
+
+    session = _scraper_make_session()
+    with patch("gencon_audiobook.scraper.time.sleep"):
+        with pytest.raises(ScraperError, match="403"):
+            _fetch(session, url)
+
+    assert len(responses_lib.calls) == 1, (
+        f"403 must not be retried — expected 1 request, got {len(responses_lib.calls)}"
+    )
