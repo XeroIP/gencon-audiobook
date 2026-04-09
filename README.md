@@ -15,15 +15,6 @@ Inspired by [General-Conference-to-Audiobook](https://github.com/ChurchofJesusCh
 
 ---
 
-## Quick Start
-
-```bash
-pip install gencon-audiobook
-gencon-audiobook
-```
-
----
-
 ## Installation
 
 ```bash
@@ -31,6 +22,8 @@ pip install gencon-audiobook
 ```
 
 Python 3.10 or newer is required. All other dependencies, including ffmpeg, are handled automatically.
+
+New to the terminal or Python? See the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) for step-by-step instructions.
 
 ---
 
