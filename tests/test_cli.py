@@ -379,6 +379,125 @@ def test_overwrite_flag_rebuilds_when_m4b_exists(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_epub_error_exits_nonzero(tmp_path: Path) -> None:
+    """An EpubError during build_epub must produce a non-zero exit and a readable message.
+
+    Without this test, the try/except EpubError block in cli.py could be silently
+    removed and users would see a Python traceback instead of an actionable error.
+    """
+    from gencon_audiobook.epub_builder import EpubError
+
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub", side_effect=EpubError("disk full")),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert result.exit_code != 0
+    assert "EPUB build error" in result.output or "disk full" in result.output, \
+        f"Expected error message in output, got: {result.output!r}"
+
+
+def test_download_error_exits_nonzero(tmp_path: Path) -> None:
+    """A DownloadError must produce a non-zero exit and a readable message.
+
+    The download phase can fail due to network issues; the user must see a
+    clear message rather than an unhandled exception traceback.
+    """
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch(
+            "gencon_audiobook.cli.download_conference",
+            side_effect=DownloadError("connection timed out"),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "Download error" in result.output or "timed out" in result.output, \
+        f"Expected download error message in output, got: {result.output!r}"
+
+
+def test_overwrite_skips_epub_when_epub_exists(tmp_path: Path) -> None:
+    """Without --overwrite, build_epub must not be called if the .epub already exists."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    epub_path = tmp_path / "April 2024 General Conference" / "April 2024 General Conference.epub"
+    epub_path.parent.mkdir(parents=True)
+    epub_path.write_bytes(b"\x00" * 1024)
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert result.exit_code == 0, result.output
+    mock_epub.assert_not_called()
+    assert "--overwrite" in result.output, \
+        "Skip message should mention --overwrite so the user knows how to rebuild"
+
+
+def test_epub_summary_line_printed(tmp_path: Path) -> None:
+    """The completion summary must include the EPUB filename and size."""
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    epub_path = tmp_path / "April 2024 General Conference" / "April 2024 General Conference.epub"
+    epub_path.parent.mkdir(parents=True)
+    epub_path.write_bytes(b"\x00" * 1024 * 512)  # 0.5 MB
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert ".epub" in result.output, \
+        f"EPUB filename should appear in the completion summary: {result.output!r}"
+
+
+def test_conference_filter_is_case_insensitive(tmp_path: Path) -> None:
+    """The --conference filter must match case-insensitively.
+
+    Users will naturally type 'april 2024' instead of 'April 2024'.
+    """
+    refs = [_make_ref("April 2024 General Conference", 2024, 4)]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "april 2024"]
+        )
+
+    assert result.exit_code == 0, \
+        f"Lowercase --conference filter should match; got exit {result.exit_code}: {result.output}"
+
+
 def test_log_file_created_in_output_dir(tmp_path: Path) -> None:
     """A gencon-audiobook.log file should be created in the conference output directory."""
     refs = [_make_ref()]

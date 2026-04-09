@@ -285,6 +285,121 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
     assert output.exists(), "m4b should still be produced when one MP3 is missing"
 
 
+# ---------------------------------------------------------------------------
+# _ffmeta_escape — pure function tests
+# ---------------------------------------------------------------------------
+
+
+def test_ffmeta_escape_equals_sign() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    assert _ffmeta_escape("A=B") == r"A\=B", "= must be backslash-escaped"
+
+
+def test_ffmeta_escape_semicolon() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    assert _ffmeta_escape("A;B") == r"A\;B", "; must be backslash-escaped"
+
+
+def test_ffmeta_escape_hash() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    assert _ffmeta_escape("A#B") == r"A\#B", "# must be backslash-escaped"
+
+
+def test_ffmeta_escape_backslash() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    # A single backslash in the input must become two backslashes
+    assert _ffmeta_escape("A\\B") == "A\\\\B", "\\ must be escaped as \\\\"
+
+
+def test_ffmeta_escape_newline() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    result = _ffmeta_escape("A\nB")
+    assert result == "A\\\nB", "newline must be escaped as \\\\n"
+
+
+def test_ffmeta_escape_plain_string_unchanged() -> None:
+    from gencon_audiobook.audio import _ffmeta_escape
+    assert _ffmeta_escape("Normal title") == "Normal title", \
+        "Plain ASCII strings should pass through unchanged"
+
+
+# ---------------------------------------------------------------------------
+# _write_ffmetadata — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_write_ffmetadata_zero_duration_logs_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A talk with duration_seconds=0 should log a WARNING, not raise."""
+    import logging
+    from gencon_audiobook.audio import _write_ffmetadata
+
+    talk = Talk(
+        title="Test Talk",
+        speaker="Test Speaker",
+        talk_url="https://www.churchofjesuschrist.org/t1",
+        talk_index=1,
+        duration_seconds=0.0,  # intentionally zero
+    )
+    session = Session(name="Morning Session", number=1, talks=[talk])
+    conference = Conference(
+        title="April 2024 General Conference",
+        year=2024,
+        month=4,
+        cover_image_url=None,
+        sessions=[session],
+        conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gencon_audiobook.audio"):
+        _write_ffmetadata(conference, tmp_path / "chapters.ffmeta")
+
+    assert any("duration" in r.message.lower() for r in caplog.records), \
+        "Should log a WARNING mentioning 'duration' when a talk has duration_seconds=0"
+
+
+# ---------------------------------------------------------------------------
+# build_m4b — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+@requires_ffmpeg
+def test_build_m4b_all_aac_files_deleted_after_build(tmp_path: Path) -> None:
+    """Intermediate .m4a files must be deleted after the m4b is assembled.
+
+    Leaving them behind wastes tens of MB per conference. This regression
+    would only be caught by inspection, so we assert it explicitly.
+    """
+    conference = _make_conference(tmp_path, n_talks=2)
+    audio_dir = tmp_path / "audio"
+    output = tmp_path / "output.m4b"
+
+    build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    leftover = list(audio_dir.glob("*.m4a"))
+    assert leftover == [], \
+        f"Intermediate .m4a files should be deleted after build, found: {[f.name for f in leftover]}"
+
+
+@requires_ffmpeg
+def test_build_m4b_raises_when_all_mp3s_missing(tmp_path: Path) -> None:
+    """When every MP3 is absent, build_m4b must raise AudioError.
+
+    This happens when --audiobook-only is run against a directory where the
+    download phase was interrupted before any files were saved.
+    """
+    conference = _make_conference(tmp_path, n_talks=3)
+    audio_dir = tmp_path / "audio"
+
+    # Delete all MP3s
+    for mp3 in audio_dir.glob("*.mp3"):
+        mp3.unlink()
+
+    with pytest.raises(AudioError, match="No AAC files produced"):
+        build_m4b(conference, audio_dir, tmp_path / "output.m4b", None, _FFMPEG, _FFPROBE)
+
+
 @requires_ffmpeg
 def test_build_m4b_chapter_boundaries_aligned(tmp_path: Path) -> None:
     """Chapter end timestamps must sum to within 1s of the m4b total duration.

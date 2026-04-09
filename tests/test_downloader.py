@@ -15,6 +15,7 @@ from gencon_audiobook.downloader import (
     _audio_path,
     _speaker_path,
     cleanup_tmp_files,
+    download_conference,
     download_file,
 )
 from gencon_audiobook.models import Conference, Session, Talk
@@ -261,3 +262,100 @@ def test_speaker_path_format(tmp_path: Path) -> None:
     path = _speaker_path(tmp_path, talk)
     assert path.name == "001-Dallin H. Oaks.jpg", f"Unexpected name: {path.name!r}"
     assert path.parent == tmp_path / "speakers"
+
+
+# ---------------------------------------------------------------------------
+# download_conference — integration of the full download queue
+# ---------------------------------------------------------------------------
+
+_COVER_URL = "https://assets.churchofjesuschrist.org/cover.jpg"
+_PHOTO_URL = "https://assets.churchofjesuschrist.org/photo.jpg"
+_MP3_URL = "https://assets.churchofjesuschrist.org/talk.mp3"
+
+
+def _make_single_talk_conference() -> Conference:
+    """Minimal Conference with one talk that has all optional URLs set."""
+    talk = Talk(
+        title="Test Talk",
+        speaker="Test Speaker",
+        talk_url="https://www.churchofjesuschrist.org/t1",
+        mp3_url=_MP3_URL,
+        speaker_image_url=_PHOTO_URL,
+        talk_index=1,
+    )
+    session = Session(name="Morning Session", number=1, talks=[talk])
+    return Conference(
+        title="Test Conference",
+        year=2024,
+        month=4,
+        cover_image_url=_COVER_URL,
+        sessions=[session],
+        conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
+    )
+
+
+@rsps_lib.activate
+def test_download_conference_skip_audio_downloads_images(tmp_path: Path) -> None:
+    """With skip_audio=True (--epub-only mode), images are downloaded but MP3s are not.
+
+    This is critical: the EPUB builder needs speaker photos and the cover image
+    even when the user doesn't want an audiobook. A regression here would produce
+    an EPUB with no images.
+    """
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _PHOTO_URL, body=_jpeg_bytes(), status=200)
+
+    conference = _make_single_talk_conference()
+    download_conference(conference, tmp_path, delay=0, skip_audio=True)
+
+    assert (tmp_path / "cover.jpg").exists(), \
+        "cover.jpg must be downloaded even in epub-only (skip_audio=True) mode"
+    assert (tmp_path / "speakers" / "001-Test Speaker.jpg").exists(), \
+        "speaker photos must be downloaded even in epub-only (skip_audio=True) mode"
+
+    audio_files = list((tmp_path / "audio").glob("*.mp3")) if (tmp_path / "audio").exists() else []
+    assert audio_files == [], \
+        f"No MP3 files should be downloaded when skip_audio=True, found: {audio_files}"
+
+
+@rsps_lib.activate
+def test_download_conference_audio_downloaded_by_default(tmp_path: Path) -> None:
+    """With skip_audio=False (the default), MP3s are queued for download.
+
+    This verifies the normal path: audio is downloaded when no --epub-only flag
+    is present, which is what build_m4b depends on downstream.
+    """
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _PHOTO_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _MP3_URL, body=_small_mp3(), status=200)
+
+    conference = _make_single_talk_conference()
+    download_conference(conference, tmp_path, delay=0, skip_audio=False)
+
+    mp3 = tmp_path / "audio" / "001-Test Talk.mp3"
+    assert mp3.exists(), \
+        f"MP3 should be downloaded by default (skip_audio=False); expected {mp3}"
+
+
+@rsps_lib.activate
+def test_download_conference_continues_on_failed_download(tmp_path: Path) -> None:
+    """A failed download (after all retries) logs a warning but does not raise.
+
+    The conference download must be resilient: if one talk's MP3 fails, the
+    rest of the downloads should continue so the user gets a partial result
+    rather than nothing.
+    """
+    # Cover fails, photo and MP3 succeed
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, status=500)
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, status=500)
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, status=500)
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, status=500)  # exhausts retries
+    rsps_lib.add(rsps_lib.GET, _PHOTO_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _MP3_URL, body=_small_mp3(), status=200)
+
+    conference = _make_single_talk_conference()
+    # Must not raise even though cover download fails
+    download_conference(conference, tmp_path, delay=0, skip_audio=False)
+
+    mp3 = tmp_path / "audio" / "001-Test Talk.mp3"
+    assert mp3.exists(), "MP3 should still be downloaded even when cover image fails"

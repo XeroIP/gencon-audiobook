@@ -390,3 +390,153 @@ def test_build_epub_css_has_no_absolute_font_sizes(tmp_path: Path) -> None:
     # Absolute units: px, pt, cm, mm, in, pc
     assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", css_no_comments), \
         "CSS must not use absolute font-size units (px, pt, cm, mm, in, pc)"
+
+
+# ---------------------------------------------------------------------------
+# build_epub — OPF correctness
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_opf_cover_meta_absent_when_no_cover(tmp_path: Path) -> None:
+    """When cover.jpg is absent, the OPF must NOT emit <meta name="cover">.
+
+    If the cover meta references a manifest item that doesn't exist, epubcheck
+    will report an error and some readers will refuse to open the file.
+    """
+    conference = _make_conference(n_talks=2)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    opf = _epub_read(output, "content.opf").decode("utf-8")
+    assert 'name="cover"' not in opf, \
+        "OPF cover meta must be absent when cover.jpg is not present"
+
+
+def test_build_epub_opf_cover_meta_present_when_cover_exists(tmp_path: Path) -> None:
+    """When cover.jpg is present, the OPF must emit <meta name="cover">."""
+    _make_jpeg(tmp_path / "cover.jpg")
+    conference = _make_conference(n_talks=2)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    opf = _epub_read(output, "content.opf").decode("utf-8")
+    assert 'name="cover"' in opf and 'content="img-cover"' in opf, \
+        "OPF cover meta must be present and reference 'img-cover' when cover.jpg exists"
+
+
+def test_build_epub_opf_spine_order_matches_talk_order(tmp_path: Path) -> None:
+    """The OPF spine must list talks in the same order as conference.talks.
+
+    An alphabetically or id-sorted spine would break reading order in strict
+    EPUB readers that follow the spine rather than the TOC.
+    """
+    conference = _make_conference(n_talks=5)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    opf = _epub_read(output, "content.opf").decode("utf-8")
+    spine_ids = re.findall(r'idref="(talk-\d+)"', opf)
+    expected = [f"talk-{t.talk_index:03d}" for t in conference.talks]
+    assert spine_ids == expected, (
+        f"OPF spine order mismatch.\nExpected: {expected}\nGot:      {spine_ids}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_epub — image handling edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_speaker_photo_resized_to_max_width(tmp_path: Path) -> None:
+    """Speaker photos wider than 300 px must be resized before embedding.
+
+    Without this check, a regression in _resize_photo (e.g., changing
+    _MAX_PHOTO_WIDTH) would silently embed full-size photos.
+    """
+    conference = _make_conference(n_talks=1)
+    talk = conference.talks[0]
+    from gencon_audiobook.utils import sanitize_filename
+    name = sanitize_filename(talk.speaker)
+    photo = tmp_path / "speakers" / f"{talk.talk_index:03d}-{name}.jpg"
+    _make_jpeg(photo, size=(600, 800))  # intentionally wider than 300 px
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    with zipfile.ZipFile(output) as zf:
+        spk_name = next(n for n in zf.namelist() if n.startswith("images/spk-"))
+        img_bytes = zf.read(spk_name)
+
+    import io as _io
+    img = Image.open(_io.BytesIO(img_bytes))
+    assert img.width <= 300, \
+        f"Embedded speaker photo should be <= 300 px wide, got {img.width} px"
+
+
+def test_build_epub_corrupted_speaker_photo_skipped_gracefully(tmp_path: Path) -> None:
+    """A corrupt speaker photo on disk must not abort the EPUB build.
+
+    A partially-downloaded file that survived cleanup would trigger this.
+    The EPUB should be produced without that photo rather than raising.
+    """
+    conference = _make_conference(n_talks=1)
+    talk = conference.talks[0]
+    from gencon_audiobook.utils import sanitize_filename
+    name = sanitize_filename(talk.speaker)
+    photo = tmp_path / "speakers" / f"{talk.talk_index:03d}-{name}.jpg"
+    photo.parent.mkdir(parents=True, exist_ok=True)
+    photo.write_bytes(b"this is not a jpeg at all")  # corrupt
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)  # must not raise
+
+    assert output.exists(), "EPUB should still be produced despite corrupt speaker photo"
+    names = _epub_names(output)
+    assert not any(n.startswith("images/spk-") for n in names), \
+        "Corrupt photo must be silently skipped, not embedded"
+
+
+# ---------------------------------------------------------------------------
+# build_epub — content escaping
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_title_with_special_chars_escaped(tmp_path: Path) -> None:
+    """Talk titles and speaker names containing HTML special characters must be escaped.
+
+    A title like 'Faith & Works' must appear as 'Faith &amp; Works' in XHTML.
+    Unescaped ampersands make the XHTML invalid XML and will fail epubcheck.
+    """
+    conference = _make_conference(n_talks=1)
+    conference.talks[0].title = "Faith & Works"
+    conference.talks[0].speaker = "Elder A. <Test>"
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    from gencon_audiobook.utils import sanitize_filename
+    # sanitize_filename strips < and > so we need to find the actual filename
+    with zipfile.ZipFile(output) as zf:
+        talk_page = next(n for n in zf.namelist() if n.startswith("text/talk-001-"))
+        page = zf.read(talk_page).decode("utf-8")
+
+    assert "&amp;" in page, "Ampersand in title must be HTML-escaped as &amp;"
+    assert "<Elder" not in page, "Unescaped angle bracket in speaker name must not appear"
+    assert "<Test>" not in page, "Unescaped angle brackets must not appear in XHTML"
+
+
+# ---------------------------------------------------------------------------
+# build_epub — error handling
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_raises_epub_error_on_write_failure(tmp_path: Path) -> None:
+    """A disk-write failure must be converted to EpubError, not a raw OSError.
+
+    Without this conversion, a disk-full condition would show the user a Python
+    traceback instead of an actionable error message.
+    """
+    from unittest.mock import patch
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+
+    with patch("zipfile.ZipFile", side_effect=OSError("disk full")):
+        with pytest.raises(EpubError, match="Failed to write EPUB"):
+            build_epub(conference, tmp_path, output)
