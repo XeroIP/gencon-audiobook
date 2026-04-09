@@ -35,7 +35,11 @@ _CONFERENCE_URL_RE = re.compile(r"/study/general-conference/(\d{4})/(\d{2})(?:\?
 # Matches /study/general-conference/YYYYYYYY (decade-range index, e.g. 20202024)
 _DECADE_RANGE_RE = re.compile(r"/study/general-conference/(\d{4})(\d{4})$")
 
-# Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL)
+# Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL).
+# Modern talk slugs use a numeric-prefix + speaker-name format with no hyphens
+# (e.g., "11oaks", "12christofferson"). Session-level links DO contain hyphens
+# (e.g., "saturday-morning-session") and must be excluded — [a-z0-9]+ achieves
+# this. Verified against fixture data; the weekly live test monitors for changes.
 _TALK_URL_RE = re.compile(r"/study/general-conference/\d{4}/\d{2}/[a-z0-9]+(?:\?|$)", re.IGNORECASE)
 
 
