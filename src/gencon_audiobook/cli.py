@@ -115,6 +115,19 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     default=False,
     help="Overwrite existing output files instead of skipping.",
 )
+@click.option(
+    "--bitrate",
+    default="64k",
+    show_default=True,
+    help="AAC encoding bitrate for the m4b (e.g., 32k, 48k, 64k). Lower values reduce file size.",
+)
+@click.option(
+    "--sample-rate",
+    default=44100,
+    show_default=True,
+    type=int,
+    help="Audio sample rate in Hz for the m4b (e.g., 22050, 44100). Lower values reduce file size.",
+)
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
     output: str,
@@ -123,6 +136,8 @@ def main(
     epub_only: bool,
     verbose: bool,
     overwrite: bool,
+    bitrate: str,
+    sample_rate: int,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _setup_logging(verbose)
@@ -180,6 +195,8 @@ def main(
                 cover_path=cover_path if cover_path.exists() else None,
                 ffmpeg_path=ffmpeg,
                 ffprobe_path=ffprobe,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
             )
         except AudioError as exc:
             click.echo(f"Audiobook build error: {exc}", err=True)

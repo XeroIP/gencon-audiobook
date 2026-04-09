@@ -127,6 +127,24 @@ def test_convert_mp3_to_aac_returns_duration(tmp_path: Path) -> None:
 
 
 @requires_ffmpeg
+def test_convert_mp3_to_aac_custom_bitrate_and_sample_rate(tmp_path: Path) -> None:
+    mp3 = tmp_path / "test.mp3"
+    make_silent_mp3(mp3, duration_seconds=3.0)
+    default_out = tmp_path / "default.m4a"
+    custom_out = tmp_path / "custom.m4a"
+
+    convert_mp3_to_aac(mp3, default_out, _FFMPEG)
+    convert_mp3_to_aac(mp3, custom_out, _FFMPEG, bitrate="32k", sample_rate=22050)
+
+    assert custom_out.stat().st_size < default_out.stat().st_size, (
+        "Lower bitrate/sample-rate output should be smaller than default"
+    )
+    # Duration should still be approximately correct regardless of encoding settings
+    duration = convert_mp3_to_aac(mp3, tmp_path / "check.m4a", _FFMPEG, bitrate="32k", sample_rate=22050)
+    assert abs(duration - 3.0) < 0.2, f"Expected ~3.0s, got {duration:.3f}s"
+
+
+@requires_ffmpeg
 def test_audio_error_on_invalid_input(tmp_path: Path) -> None:
     mp3 = tmp_path / "nonexistent.mp3"
     aac = tmp_path / "output.m4a"

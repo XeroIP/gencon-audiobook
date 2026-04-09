@@ -264,13 +264,17 @@ def convert_mp3_to_aac(
     mp3_path: Path,
     aac_path: Path,
     ffmpeg_path: Path,
+    bitrate: str = "64k",
+    sample_rate: int = 44100,
 ) -> float:
-    """Convert an MP3 file to AAC-LC at 64kbps / 44.1kHz / mono.
+    """Convert an MP3 file to AAC-LC / mono.
 
     Args:
         mp3_path: Input MP3 file.
         aac_path: Output AAC file path.
         ffmpeg_path: Path to ffmpeg binary.
+        bitrate: AAC encoding bitrate as an ffmpeg bitrate string (e.g., "64k", "32k").
+        sample_rate: Output sample rate in Hz (e.g., 44100, 22050).
 
     Returns:
         Duration of the audio in seconds.
@@ -288,8 +292,8 @@ def convert_mp3_to_aac(
             str(ffmpeg_path),
             "-i", str(mp3_path),
             "-c:a", "aac",
-            "-b:a", "64k",
-            "-ar", "44100",
+            "-b:a", bitrate,
+            "-ar", str(sample_rate),
             "-ac", "1",
             "-y",
             str(aac_path),
@@ -308,6 +312,8 @@ def build_m4b(
     cover_path: Path | None,
     ffmpeg_path: Path,
     ffprobe_path: Path,
+    bitrate: str = "64k",
+    sample_rate: int = 44100,
 ) -> None:
     """Build a chaptered m4b audiobook from downloaded MP3 files.
 
@@ -328,6 +334,8 @@ def build_m4b(
         cover_path: Optional JPEG cover art path.
         ffmpeg_path: Path to ffmpeg binary.
         ffprobe_path: Path to ffprobe binary.
+        bitrate: AAC encoding bitrate as an ffmpeg bitrate string (e.g., "64k", "32k").
+        sample_rate: Output sample rate in Hz (e.g., 44100, 22050).
 
     Raises:
         AudioError: if any ffmpeg step fails or no valid talks are found.
@@ -349,7 +357,7 @@ def build_m4b(
 
         aac_path = mp3_path.with_suffix(".m4a")
         try:
-            duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path)
+            duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, bitrate, sample_rate)
             talk.duration_seconds = duration
             aac_paths.append(aac_path)
             logger.debug("Converted %s (%.1fs)", mp3_path.name, duration)
