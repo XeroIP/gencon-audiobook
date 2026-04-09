@@ -1,6 +1,9 @@
 # gencon-audiobook
 
 [![CI](https://github.com/XeroIP/gencon-audiobook/actions/workflows/ci.yml/badge.svg)](https://github.com/XeroIP/gencon-audiobook/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/gencon-audiobook)](https://pypi.org/project/gencon-audiobook/)
+[![Python versions](https://img.shields.io/pypi/pyversions/gencon-audiobook)](https://pypi.org/project/gencon-audiobook/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Download General Conference talks from [churchofjesuschrist.org](https://www.churchofjesuschrist.org) and produce:
 
@@ -69,7 +72,6 @@ For the full options reference, file size guide, and platform compatibility note
     cover.jpg                            # Conference cover image
     audio/                               # Downloaded MP3 files
     speakers/                            # Speaker photos
-    gencon-audiobook.log                 # Full DEBUG log for troubleshooting
 ```
 
 Running the tool a second time skips files that already exist. Use `--overwrite` to rebuild.
@@ -125,9 +127,6 @@ tests/
   test_scraper_live.py    Live smoke tests (@pytest.mark.live)
   test_integration.py     End-to-end test (@pytest.mark.integration)
   fixtures/               Saved HTML snapshots for scraper unit tests
-
-scripts/
-  update_fixtures.py      Refresh HTML fixtures from the live site
 ```
 
 ---
