@@ -14,61 +14,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from conftest import FFMPEG as _FFMPEG, FFPROBE as _FFPROBE, make_silent_mp3, requires_ffmpeg
 from gencon_audiobook.audio import AudioError, _ascii_safe, _probe_source_quality, build_m4b, convert_mp3_to_aac
 from gencon_audiobook.models import Conference, Session, Talk
-
-
-# ---------------------------------------------------------------------------
-# Fixtures and helpers
-# ---------------------------------------------------------------------------
-
-
-def _find_ffmpeg() -> Path | None:
-    which = shutil.which("ffmpeg")
-    return Path(which) if which else None
-
-
-def _find_ffprobe(ffmpeg: Path) -> Path | None:
-    suffix = ffmpeg.suffix
-    candidate = ffmpeg.parent / f"ffprobe{suffix}"
-    if candidate.exists():
-        return candidate
-    which = shutil.which("ffprobe")
-    return Path(which) if which else None
-
-
-_FFMPEG = _find_ffmpeg()
-_FFPROBE = _find_ffprobe(_FFMPEG) if _FFMPEG else None
-
-requires_ffmpeg = pytest.mark.skipif(
-    _FFMPEG is None or _FFPROBE is None,
-    reason="ffmpeg/ffprobe not available on PATH",
-)
-
-
-def make_silent_mp3(path: Path, duration_seconds: float = 2.0) -> None:
-    """Generate a short silent MP3 test fixture using ffmpeg.
-
-    Args:
-        path: Destination path for the MP3 file.
-        duration_seconds: Duration of the generated audio.
-    """
-    assert _FFMPEG is not None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            str(_FFMPEG),
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=mono:sample_rate=44100",
-            "-t", str(duration_seconds),
-            "-acodec", "libmp3lame",
-            "-ab", "128k",
-            "-y",
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
 
 
 def _make_conference(tmp_path: Path, n_talks: int = 3, duration: float = 2.0) -> Conference:

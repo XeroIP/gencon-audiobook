@@ -14,76 +14,17 @@ from __future__ import annotations
 
 import io
 import json
-import shutil
-import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 from mutagen.mp4 import MP4
-from PIL import Image
 
+from conftest import FFMPEG as _FFMPEG, FFPROBE as _FFPROBE, make_jpeg as _make_jpeg, make_silent_mp3 as _make_silent_mp3, requires_ffmpeg
 from gencon_audiobook.audio import build_m4b
 from gencon_audiobook.epub_builder import build_epub
 from gencon_audiobook.models import Conference, Session, Talk
 from gencon_audiobook.utils import sanitize_filename
-
-
-# ---------------------------------------------------------------------------
-# ffmpeg availability
-# ---------------------------------------------------------------------------
-
-
-def _find_ffmpeg() -> Path | None:
-    w = shutil.which("ffmpeg")
-    return Path(w) if w else None
-
-
-def _find_ffprobe(ffmpeg: Path) -> Path | None:
-    cand = ffmpeg.parent / f"ffprobe{ffmpeg.suffix}"
-    if cand.exists():
-        return cand
-    w = shutil.which("ffprobe")
-    return Path(w) if w else None
-
-
-_FFMPEG = _find_ffmpeg()
-_FFPROBE = _find_ffprobe(_FFMPEG) if _FFMPEG else None
-
-requires_ffmpeg = pytest.mark.skipif(
-    _FFMPEG is None or _FFPROBE is None,
-    reason="ffmpeg/ffprobe not available on PATH",
-)
-
-
-# ---------------------------------------------------------------------------
-# Fixture builders
-# ---------------------------------------------------------------------------
-
-
-def _make_silent_mp3(path: Path, duration: float = 3.0) -> None:
-    """Write a short silent MP3 to path using ffmpeg."""
-    assert _FFMPEG is not None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            str(_FFMPEG),
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=mono:sample_rate=44100",
-            "-t", str(duration),
-            "-acodec", "libmp3lame",
-            "-ab", "128k",
-            "-y", str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
-
-
-def _make_jpeg(path: Path, size: tuple[int, int] = (200, 200)) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img = Image.new("RGB", size, color="gray")
-    img.save(path, format="JPEG")
 
 
 def _build_conference(tmp_path: Path) -> Conference:
@@ -153,7 +94,7 @@ def _build_conference(tmp_path: Path) -> Conference:
     # MP3 files
     for talk in conference.talks:
         mp3 = tmp_path / "audio" / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
-        _make_silent_mp3(mp3, duration=3.0)
+        _make_silent_mp3(mp3, duration_seconds=3.0)
 
     # Cover image
     _make_jpeg(tmp_path / "cover.jpg", size=(400, 600))
