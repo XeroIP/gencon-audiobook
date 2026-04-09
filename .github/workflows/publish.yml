@@ -5,14 +5,12 @@ on:
     tags:
       - "v*.*.*"
 
-permissions:
-  contents: write   # needed to create a GitHub release
-  id-token: write   # needed for PyPI Trusted Publishing (OIDC)
-
 jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -34,11 +32,33 @@ jobs:
           name: dist
           path: dist/
 
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest tests/ -v --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
+
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [build, test]
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      id-token: write
 
     steps:
       - name: Download build artifacts
@@ -52,8 +72,10 @@ jobs:
 
   release:
     name: Create GitHub release
-    needs: build
+    needs: [build, publish]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Download build artifacts
