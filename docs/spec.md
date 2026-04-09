@@ -31,7 +31,7 @@ gencon-audiobook --overwrite              # Overwrite existing output files
   cover.jpg                             # Conference cover image
   audio/                                # Downloaded and converted audio
     001-sanitized-title.mp3             # Zero-padded talk_index, sanitized title
-    001-sanitized-title.aac             # Intermediate AAC (deleted after m4b is built)
+    001-sanitized-title.m4a             # Intermediate AAC (deleted after m4b is built)
     ...
   speakers/                             # Speaker photos (for reference and epub)
     001-speaker-name.jpg                # Zero-padded talk_index, sanitized speaker name
@@ -54,7 +54,7 @@ that both `downloader.py` and `audio.py` can compute independently from the Talk
 | HTML parser | `html.parser` (stdlib) | Zero install, cross-platform. Resilience over speed for a single-site tool. |
 | ffmpeg sourcing | System PATH first, then `static-ffmpeg` fallback | Users with ffmpeg already installed (most Linux/macOS users) get zero overhead. New users get automatic download. |
 | m4b chapters | ffmpeg FFMETADATA1 format | Only reliable method for writing MP4 chapter atoms. Mutagen used for post-creation verification only — mutagen cannot write chapters. |
-| m4b audio | AAC-LC, 64 kbps, 44.1 kHz, mono | Maximum compatibility across iOS and Android. HE-AAC has spotty Android support. Mono is correct for speech. |
+| m4b audio | AAC-LC, source-matched bitrate/sample-rate, mono | Maximum compatibility across iOS and Android. HE-AAC has spotty Android support. Mono is correct for speech. Source quality is preserved by default; `--bitrate` and `--sample-rate` flags override. |
 | m4b cover | Book-level JPEG only | Per-chapter images not reliably rendered by any player. |
 | m4b chapters | `"Talk Title -- Speaker Name"` | MP4 chapter spec has no author field; speaker name embedded in title with em-dash separator. |
 | EPUB generation | Manual ZIP of XHTML | `ebooklib` is unmaintained (last release 2022), has 100+ open bugs, and produces non-compliant EPUB 3 output. Manual generation gives full control and reliable epubcheck compliance. |
@@ -101,6 +101,14 @@ churchofjesuschrist.org
 ## Data Models
 
 ```python
+@dataclass
+class ConferenceRef:
+    """Lightweight reference returned by fetch_available_conferences()."""
+    title: str   # e.g., "April 2024 General Conference"
+    url: str     # Full URL to the conference listing page
+    year: int
+    month: int   # 4 for April, 10 for October
+
 @dataclass
 class Talk:
     title: str
@@ -195,7 +203,7 @@ Dependencies intentionally NOT used:
    traversal (`..`, absolute paths, null bytes). Truncate at 200 characters.
 3. **SSL verification** — Always on. Never `verify=False`.
 4. **No code execution** — Never `eval()` or `exec()` scraped content. JSON-parse only.
-5. **Rate limiting** — Default 0.5s delay between HTTP requests. Configurable.
+5. **Rate limiting** — Default 0.5s delay between HTTP requests. Not configurable via CLI.
 6. **User-Agent** — `gencon-audiobook/<version> (open source; github.com/XeroIP/gencon-audiobook)`
 7. **Timeouts** — HTML: connect=15s, read=30s. MP3: connect=30s, read=120s.
 8. **No credentials** — All content is publicly accessible. No tokens or API keys.
@@ -214,7 +222,7 @@ The Church website will change. This is the most critical ongoing maintenance co
 - Descriptive error on parse failure: "Could not find talk listings. The website structure may have
   changed. Please open a GitHub issue at github.com/XeroIP/gencon-audiobook."
 - Detect bot/Cloudflare protection: challenge pages, 403s, empty content
-- Exponential backoff on failures (1s, 2s, 4s, 8s) before giving up
+- Exponential backoff on failures (1s, 2s, 4s) before giving up
 - Respect `robots.txt`
 
 ### Conference listing resilience
@@ -323,5 +331,5 @@ Full test suite:
 ```bash
 pytest tests/ -v --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
 pytest tests/test_scraper_live.py -v -m live
-pytest --cov=gencon_audiobook --cov-report=term-missing
+pytest --cov=gencon_audiobook --cov-report=term-missing --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
 ```
