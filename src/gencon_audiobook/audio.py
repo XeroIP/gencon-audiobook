@@ -159,7 +159,10 @@ def _write_ffmetadata(conference: Conference, path: Path) -> None:
         ]
         offset_ms = end_ms
 
-    path.write_text("\n".join(lines), encoding="utf-8")
+    # Write as Latin-1: ffmpeg on Windows reads FFMETADATA1 files using the system
+    # codepage (Latin-1/cp1252), not UTF-8. Writing UTF-8 causes mojibake for any
+    # non-ASCII characters in titles or speaker names.
+    path.write_text("\n".join(lines), encoding="latin-1", errors="replace")
     logger.debug("Wrote FFMETADATA1 to %s (%d chapters)", path, len(conference.talks))
 
 
