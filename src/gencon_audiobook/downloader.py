@@ -231,7 +231,7 @@ def download_conference(
     output_dir: Path,
     delay: float = 0.5,
     skip_audio: bool = False,
-) -> None:
+) -> list[Talk]:
     """Download all MP3s, cover image, and speaker photos for a conference.
 
     Files are downloaded to .tmp first, renamed on success. Existing files of
@@ -243,6 +243,9 @@ def download_conference(
         output_dir: Directory to download into. Created if it doesn't exist.
         delay: Seconds to wait between HTTP requests.
         skip_audio: If True, skip MP3 downloads (for --epub-only mode).
+
+    Returns:
+        List of Talk objects whose audio download failed (empty if all succeeded).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_tmp_files(output_dir)
@@ -250,29 +253,30 @@ def download_conference(
     session = _make_session()
     talks = conference.talks
 
-    # Build download queue: (url, dest, label, is_image)
-    queue: list[tuple[str, Path, str, bool]] = []
+    # Build download queue: (url, dest, label, is_image, talk_or_none)
+    # talk_or_none is set for audio items so failed talks can be returned to the caller.
+    queue: list[tuple[str, Path, str, bool, Talk | None]] = []
 
     if not skip_audio:
         for talk in talks:
             if talk.mp3_url:
                 dest = _audio_path(output_dir, talk)
-                queue.append((talk.mp3_url, dest, f"[audio] {talk.title[:50]}", False))
+                queue.append((talk.mp3_url, dest, f"[audio] {talk.title[:50]}", False, talk))
             else:
                 logger.warning("Talk %r has no mp3_url — skipping audio download", talk.title)
 
     if conference.cover_image_url:
         cover_dest = output_dir / "cover.jpg"
-        queue.append((conference.cover_image_url, cover_dest, "[cover] cover.jpg", True))
+        queue.append((conference.cover_image_url, cover_dest, "[cover] cover.jpg", True, None))
 
     for talk in talks:
         if talk.speaker_image_url:
             dest = _speaker_path(output_dir, talk)
-            queue.append((talk.speaker_image_url, dest, f"[photo] {talk.speaker[:40]}", True))
+            queue.append((talk.speaker_image_url, dest, f"[photo] {talk.speaker[:40]}", True, None))
 
     if not queue:
         logger.info("Nothing to download.")
-        return
+        return []
 
     logger.info(
         "Downloading %d file(s) for %s",
@@ -297,11 +301,12 @@ def download_conference(
 
     skipped = 0
     failed: list[str] = []
+    failed_talks: list[Talk] = []
 
     with overall_progress, file_progress:
         overall_task = overall_progress.add_task("Downloading files", total=len(queue))
 
-        for url, dest, label, is_image in queue:
+        for url, dest, label, is_image, talk in queue:
             overall_progress.update(overall_task, description=label)
             try:
                 if is_image:
@@ -312,6 +317,8 @@ def download_conference(
             except (DownloadError, ValueError) as exc:
                 logger.error("Failed to download %s: %s", label, exc)
                 failed.append(label)
+                if talk is not None:
+                    failed_talks.append(talk)
             finally:
                 overall_progress.advance(overall_task)
 
@@ -323,3 +330,5 @@ def download_conference(
             len(failed),
             ", ".join(failed),
         )
+
+    return failed_talks

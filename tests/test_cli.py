@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -203,8 +204,15 @@ def test_conference_filter_no_match_exits_nonzero(tmp_path: Path) -> None:
 
 
 def test_disk_space_warning_printed(tmp_path: Path) -> None:
+    """Disk space warning fires only when available space is below the threshold."""
     refs = [_make_ref()]
     conference = _make_conference()
+
+    # Simulate 100 MB free — well below the 500 MB threshold.
+    low_space = shutil.disk_usage.__class__  # use the real namedtuple type
+    import collections
+    DiskUsage = collections.namedtuple("DiskUsage", ["total", "used", "free"])
+    fake_usage = DiskUsage(total=1_000_000_000, used=900_000_000, free=100 * 1024 * 1024)
 
     with (
         patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
@@ -213,11 +221,13 @@ def test_disk_space_warning_printed(tmp_path: Path) -> None:
         patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
         patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
         patch("gencon_audiobook.cli.build_m4b"),
+        patch("gencon_audiobook.cli.shutil.disk_usage", return_value=fake_usage),
     ):
         runner = CliRunner()
         result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
 
-    assert "500 MB" in result.output, "Disk space warning should mention 500 MB"
+    assert "500 MB" in result.output, "Disk space warning should mention 500 MB threshold"
+    assert "100 MB" in result.output, "Disk space warning should show available space"
 
 
 # ---------------------------------------------------------------------------

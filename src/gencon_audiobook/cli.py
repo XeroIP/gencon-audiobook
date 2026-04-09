@@ -3,37 +3,53 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 from pathlib import Path
 
 _LOG_FILENAME = "gencon-audiobook.log"
+_MIN_PYTHON = (3, 10)
+_DISK_WARN_MB = 500
 
 import click
+from rich.console import Console
+from rich.logging import RichHandler
 
 from . import __version__
 from .audio import AudioError, build_m4b
 from .downloader import DownloadError, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
+from .models import Talk
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
 logger = logging.getLogger(__name__)
 
+# Module-level console so helpers can print without threading a Console argument.
+console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Logging setup
+# ---------------------------------------------------------------------------
+
 
 def _setup_logging(verbose: bool) -> None:
-    """Configure console logging at INFO (or DEBUG if verbose).
+    """Configure console logging using Rich.
 
     Args:
-        verbose: If True, set root level to DEBUG; otherwise INFO.
+        verbose: If True, show DEBUG messages on the console; otherwise INFO.
     """
-    level = logging.DEBUG if verbose else logging.INFO
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setLevel(level)
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
-    handler.setFormatter(formatter)
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)  # root at DEBUG so file handler captures everything
-    root.addHandler(handler)
+    log_level = logging.DEBUG if verbose else logging.INFO
+    console_handler = RichHandler(
+        level=log_level,
+        console=console,
+        show_time=False,
+        show_path=False,
+        markup=False,
+    )
+    # Root logger at DEBUG so the file handler (added later) captures everything.
+    logging.basicConfig(level=logging.DEBUG, handlers=[console_handler], force=True)
 
 
 def _add_file_logging(log_dir: Path) -> None:
@@ -50,11 +66,56 @@ def _add_file_logging(log_dir: Path) -> None:
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     ))
     logging.getLogger().addHandler(file_handler)
     logger.debug("Debug log: %s", log_path)
+
+
+# ---------------------------------------------------------------------------
+# Preflight checks
+# ---------------------------------------------------------------------------
+
+
+def _check_python_version() -> None:
+    """Exit with a clear message if Python is older than _MIN_PYTHON."""
+    if sys.version_info < _MIN_PYTHON:
+        ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+        req = ".".join(str(n) for n in _MIN_PYTHON)
+        click.echo(
+            f"Error: This tool requires Python {req} or newer. "
+            f"You are running Python {ver}.\n"
+            "Please upgrade: https://www.python.org/downloads/",
+            err=True,
+        )
+        sys.exit(1)
+
+
+def _check_disk_space(path: Path) -> None:
+    """Warn (but do not abort) if available disk space is below _DISK_WARN_MB.
+
+    Args:
+        path: Directory (or its parent) to check available space for.
+    """
+    check_path = path if path.exists() else path.parent
+    try:
+        stat = shutil.disk_usage(check_path)
+        available_mb = stat.free // (1024 * 1024)
+        if available_mb < _DISK_WARN_MB:
+            console.print(
+                f"[yellow]Warning:[/yellow] Only {available_mb} MB available in "
+                f"{check_path}. This tool requires approximately {_DISK_WARN_MB} MB. "
+                "Proceed with caution."
+            )
+    except OSError:
+        # Non-fatal — disk_usage can fail on unusual mount points.
+        logger.debug("Could not check disk space for %s", path)
+
+
+# ---------------------------------------------------------------------------
+# Conference selection
+# ---------------------------------------------------------------------------
 
 
 def _select_conference(conference_filter: str | None) -> tuple[str, str]:
@@ -72,15 +133,19 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     Raises:
         SystemExit: if the filter matches nothing or the list cannot be fetched.
     """
-    click.echo("Fetching available conferences...")
+    console.print("Fetching available conferences...")
     try:
         refs = fetch_available_conferences()
     except ScraperError as exc:
-        click.echo(f"Error fetching conference list: {exc}", err=True)
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
     if not refs:
-        click.echo("No conferences found. Please check your internet connection.", err=True)
+        click.echo(
+            "Error: No conferences found.\n"
+            "Check your internet connection and try again.",
+            err=True,
+        )
         sys.exit(1)
 
     if conference_filter:
@@ -88,19 +153,25 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         matches = [r for r in refs if needle in r.title.lower()]
         if not matches:
             click.echo(
-                f"No conference matching {conference_filter!r}. Available conferences:",
+                f"Error: No conference matching {conference_filter!r}.\n\n"
+                "Available conferences:",
                 err=True,
             )
             for i, r in enumerate(refs[:10], 1):
                 click.echo(f"  {i}. {r.title}", err=True)
             sys.exit(1)
         selected = matches[0]
-        click.echo(f"Selected: {selected.title}")
+        console.print(f"Selected: {selected.title}")
         return selected.title, selected.url
 
-    # Default: most recent (first in list); print menu for context
-    click.echo(f"Found {len(refs)} conferences. Defaulting to most recent: {refs[0].title}")
+    # Default: most recent (first in list)
+    console.print(f"Found {len(refs)} conferences. Using: {refs[0].title}")
     return refs[0].title, refs[0].url
+
+
+# ---------------------------------------------------------------------------
+# CLI command
+# ---------------------------------------------------------------------------
 
 
 @click.command()
@@ -125,7 +196,7 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     "--epub-only",
     is_flag=True,
     default=False,
-    help="Produce only the epub, skip audiobook. (Phase 2)",
+    help="Produce only the epub, skip audiobook.",
 )
 @click.option(
     "--verbose",
@@ -143,14 +214,14 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     "--bitrate",
     default="64k",
     show_default=True,
-    help="AAC encoding bitrate for the m4b (e.g., 32k, 48k, 64k). Lower values reduce file size.",
+    help="AAC encoding bitrate for the m4b (e.g., 32k, 48k, 64k).",
 )
 @click.option(
     "--sample-rate",
     default=44100,
     show_default=True,
     type=int,
-    help="Audio sample rate in Hz for the m4b (e.g., 22050, 44100). Lower values reduce file size.",
+    help="Audio sample rate in Hz for the m4b (e.g., 22050, 44100).",
 )
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
@@ -164,34 +235,73 @@ def main(
     sample_rate: int,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
+    _check_python_version()
     _setup_logging(verbose)
 
-    # Resolve output directory
+    try:
+        _run(
+            output=output,
+            conference=conference,
+            audiobook_only=audiobook_only,
+            epub_only=epub_only,
+            overwrite=overwrite,
+            bitrate=bitrate,
+            sample_rate=sample_rate,
+        )
+    except KeyboardInterrupt:
+        console.print(
+            "\nDownload interrupted. "
+            "Run again to resume — already-downloaded files will not be re-downloaded."
+        )
+        sys.exit(1)
+
+
+def _run(
+    output: str,
+    conference: str | None,
+    audiobook_only: bool,
+    epub_only: bool,
+    overwrite: bool,
+    bitrate: str,
+    sample_rate: int,
+) -> None:
+    """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()
 
-    # Select conference
     conf_title, conf_url = _select_conference(conference)
 
-    # Disk space warning
-    click.echo("Note: approximately 500 MB of disk space required.")
-
     # Scrape conference details
-    click.echo(f"Scraping conference: {conf_title}")
+    console.print(f"Scraping conference: {conf_title}")
     try:
         conf_obj = scrape_conference(conf_url)
     except ScraperError as exc:
-        click.echo(f"Error scraping conference: {exc}", err=True)
+        click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
     conf_output_dir = output_dir / conf_obj.title
-    _add_file_logging(conf_output_dir)
 
-    # Download audio (skipped for --epub-only) and images
-    click.echo(f"Downloading {len(conf_obj.talks)} talks...")
+    # Wire up the log file now that we know where output goes.
     try:
-        download_conference(conf_obj, conf_output_dir, skip_audio=epub_only)
+        _add_file_logging(conf_output_dir)
+    except OSError as exc:
+        click.echo(
+            f"Error: Cannot write to {conf_output_dir}.\n"
+            f"Check permissions and try again.\n({exc})",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Warn if disk space is low before starting downloads.
+    _check_disk_space(conf_output_dir)
+
+    # Download audio (skipped for --epub-only) and images.
+    console.print(f"Downloading files for {len(conf_obj.talks)} talks...")
+    try:
+        failed_talks: list[Talk] = download_conference(
+            conf_obj, conf_output_dir, skip_audio=epub_only
+        )
     except DownloadError as exc:
-        click.echo(f"Download error: {exc}", err=True)
+        click.echo(f"Error: Download failed: {exc}", err=True)
         sys.exit(1)
 
     m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
@@ -199,19 +309,21 @@ def main(
 
     # Build m4b audiobook
     if not epub_only:
-        click.echo("Building audiobook...")
+        console.print("Building audiobook...")
         try:
             ffmpeg = ensure_ffmpeg()
             ffprobe = ensure_ffprobe()
         except FfmpegNotFoundError as exc:
-            click.echo(f"ffmpeg not available:\n{exc}", err=True)
+            click.echo(f"Error: ffmpeg not available.\n{exc}", err=True)
             sys.exit(1)
 
         audio_dir = conf_output_dir / "audio"
         cover_path = conf_output_dir / "cover.jpg"
 
         if m4b_path.exists() and not overwrite:
-            click.echo(f"Audiobook already exists (use --overwrite to rebuild): {m4b_path.name}")
+            console.print(
+                f"Audiobook already exists (use --overwrite to rebuild): {m4b_path.name}"
+            )
         else:
             try:
                 build_m4b(
@@ -225,14 +337,16 @@ def main(
                     sample_rate=sample_rate,
                 )
             except AudioError as exc:
-                click.echo(f"Audiobook build error: {exc}", err=True)
+                click.echo(f"Error: Audiobook build failed.\n{exc}", err=True)
                 sys.exit(1)
 
     # Build EPUB companion
     if not audiobook_only:
-        click.echo("Building epub...")
+        console.print("Building epub...")
         if epub_path.exists() and not overwrite:
-            click.echo(f"EPUB already exists (use --overwrite to rebuild): {epub_path.name}")
+            console.print(
+                f"EPUB already exists (use --overwrite to rebuild): {epub_path.name}"
+            )
         else:
             try:
                 build_epub(
@@ -241,16 +355,26 @@ def main(
                     output_path=epub_path,
                 )
             except EpubError as exc:
-                click.echo(f"EPUB build error: {exc}", err=True)
+                click.echo(f"Error: EPUB build failed.\n{exc}", err=True)
                 sys.exit(1)
 
-    click.echo("")
-    click.echo(f"Output saved to: {conf_output_dir}")
+    # Summary
+    console.print("")
+    console.print(f"Output saved to: {conf_output_dir}")
     if m4b_path.exists():
         size_mb = m4b_path.stat().st_size / 1_048_576
         chapter_count = len(conf_obj.talks)
-        click.echo(f"  {m4b_path.name} ({size_mb:.0f} MB, {chapter_count} chapters)")
+        console.print(f"  {m4b_path.name} ({size_mb:.0f} MB, {chapter_count} chapters)")
     if epub_path.exists():
         size_mb = epub_path.stat().st_size / 1_048_576
         talk_count = len(conf_obj.talks)
-        click.echo(f"  {epub_path.name} ({size_mb:.1f} MB, {talk_count} talks)")
+        console.print(f"  {epub_path.name} ({size_mb:.1f} MB, {talk_count} talks)")
+
+    if failed_talks:
+        console.print(
+            f"\n[yellow]Warning:[/yellow] {len(failed_talks)} talk(s) could not be "
+            "downloaded and are not included in the output:"
+        )
+        for talk in failed_talks:
+            console.print(f"  - {talk.title} ({talk.speaker})")
+        console.print(f"For details, see: {conf_output_dir / _LOG_FILENAME}")
