@@ -263,7 +263,7 @@ def _copyright_page(conference_title: str, year: int) -> str:
         '<div class="copyright">\n'
         f'  <p>{escape(conference_title)}</p>\n'
         f'  <p>{escape(notice)}</p>\n'
-        '  <p>This is an unofficial tool and is not affiliated with or endorsed by '
+        '  <p>This EPUB file was created using an unofficial tool that is not affiliated with or endorsed by '
         'The Church of Jesus Christ of Latter-day Saints.</p>\n'
         '</div>'
     )
