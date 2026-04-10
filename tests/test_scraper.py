@@ -21,6 +21,7 @@ from gencon_audiobook.scraper import (
     parse_conference_archive,
     parse_conference_listing,
     parse_talk_page,
+    reset_robots_cache,
 )
 from gencon_audiobook.utils import validate_url
 
@@ -237,8 +238,7 @@ def test_check_robots_allows_permitted_url() -> None:
     http = _make_http_session(robots_text)
 
     base = "https://www.churchofjesuschrist.org"
-    # Clear cache so this test's mock is used
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
     # Should not raise
     _check_robots(http, f"{base}/study/general-conference/2024/04")
@@ -250,7 +250,7 @@ def test_check_robots_raises_on_disallowed_url() -> None:
     http = _make_http_session(robots_text)
 
     base = "https://www.churchofjesuschrist.org"
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
     with pytest.raises(ScraperError, match="disallowed by robots.txt"):
         _check_robots(http, f"{base}/study/general-conference/2024/04")
@@ -262,7 +262,7 @@ def test_get_robots_returns_none_on_fetch_failure() -> None:
     session.get.side_effect = ConnectionError("network error")
 
     base = "https://www.churchofjesuschrist.org"
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
     result = _get_robots(session, base)
     assert result is None, "Should return None when robots.txt is unreachable"
@@ -274,7 +274,7 @@ def test_check_robots_proceeds_when_robots_unreachable() -> None:
     session.get.side_effect = ConnectionError("network error")
 
     base = "https://www.churchofjesuschrist.org"
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
     # Should not raise even though the fetch failed
     _check_robots(session, f"{base}/study/general-conference/2024/04")
@@ -286,7 +286,7 @@ def test_get_robots_caches_result() -> None:
     http = _make_http_session(robots_text)
 
     base = "https://www.example-cache-test.org"
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
     _get_robots(http, base)
     _get_robots(http, base)
@@ -294,8 +294,7 @@ def test_get_robots_caches_result() -> None:
     assert http.get.call_count == 1, \
         f"robots.txt should be fetched once and cached, got {http.get.call_count} calls"
 
-    # Cleanup
-    _robots_cache.pop(base, None)
+    reset_robots_cache()
 
 
 # ---------------------------------------------------------------------------
