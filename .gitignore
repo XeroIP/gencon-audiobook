@@ -1,6 +1,7 @@
 # Output files
 *.m4b
 *.epub
+*.m4a
 *.mp3
 *.aac
 *.tmp
@@ -18,6 +19,10 @@ build/
 venv/
 .coverage
 htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
 
 # Claude Code
 .claude/settings.local.json
