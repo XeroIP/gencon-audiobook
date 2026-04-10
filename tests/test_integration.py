@@ -331,10 +331,8 @@ def test_full_pipeline_m4b_and_epub(tmp_path: Path) -> None:
     # Phase 3: Cross-output consistency
     # -------------------------------------------------------------------------
 
-    epub_talk_count = len([
-        n for n in zipfile.ZipFile(epub_path).namelist()
-        if n.startswith("text/talk-")
-    ])
+    with zipfile.ZipFile(epub_path) as zf:
+        epub_talk_count = len([n for n in zf.namelist() if n.startswith("text/talk-")])
     assert len(chapters) == epub_talk_count, (
         f"m4b chapter count ({len(chapters)}) must equal EPUB talk page count "
         f"({epub_talk_count})"

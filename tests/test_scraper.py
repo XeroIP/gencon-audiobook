@@ -182,10 +182,9 @@ def test_parse_talk_page_missing_speaker_photo_returns_none():
 def test_parse_talk_page_extracts_speaker_name():
     html = _load("talk_page.html")
     data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
-    # Speaker may not always be present — just check it doesn't contain "Presented by"
-    if data["speaker"]:
-        assert "presented by" not in data["speaker"].lower(), \
-            f"Speaker should not contain 'Presented by': {data['speaker']!r}"
+    assert data["speaker"] is not None, "Speaker should be present in the talk page fixture"
+    assert "presented by" not in data["speaker"].lower(), \
+        f"Speaker should not contain 'Presented by': {data['speaker']!r}"
 
 
 # ---------------------------------------------------------------------------

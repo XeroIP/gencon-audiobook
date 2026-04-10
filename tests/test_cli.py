@@ -210,7 +210,6 @@ def test_disk_space_warning_printed(tmp_path: Path) -> None:
     conference = _make_conference()
 
     # Simulate 100 MB free — well below the 500 MB threshold.
-    low_space = shutil.disk_usage.__class__  # use the real namedtuple type
     import collections
     DiskUsage = collections.namedtuple("DiskUsage", ["total", "used", "free"])
     fake_usage = DiskUsage(total=1_000_000_000, used=900_000_000, free=100 * 1024 * 1024)

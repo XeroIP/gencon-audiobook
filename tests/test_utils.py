@@ -95,57 +95,69 @@ def test_sanitize_filename_already_clean_name():
 
 
 def test_validate_url_exact_domain():
-    assert validate_url("https://churchofjesuschrist.org/study/general-conference") is True
+    url = "https://churchofjesuschrist.org/study/general-conference"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_ldscdn_subdomain():
-    assert validate_url("https://media.ldscdn.org/audio/general-conference/talk.mp3") is True
+    url = "https://media.ldscdn.org/audio/general-conference/talk.mp3"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_ldscdn_deeper_subdomain():
-    assert validate_url("https://cdn2.ldscdn.org/audio/talk.mp3") is True
+    url = "https://cdn2.ldscdn.org/audio/talk.mp3"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_media_churchofjesuschrist():
-    assert validate_url("https://media.churchofjesuschrist.org/audio/talk.mp3") is True
+    url = "https://media.churchofjesuschrist.org/audio/talk.mp3"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_media_numbered_subdomain():
-    assert validate_url("https://media2.churchofjesuschrist.org/audio/talk.mp3") is True
+    url = "https://media2.churchofjesuschrist.org/audio/talk.mp3"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_www_subdomain():
-    assert validate_url("https://www.churchofjesuschrist.org/study/general-conference") is True
+    url = "https://www.churchofjesuschrist.org/study/general-conference"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_assets_subdomain():
-    assert validate_url("https://assets.churchofjesuschrist.org/abc123-32k-en.mp3") is True
+    url = "https://assets.churchofjesuschrist.org/abc123-32k-en.mp3"
+    assert validate_url(url) is True, f"Expected allowed URL to pass: {url!r}"
 
 
 def test_validate_url_non_allowlisted_domain_rejected():
-    assert validate_url("https://evil.com/malware.mp3") is False
+    url = "https://evil.com/malware.mp3"
+    assert validate_url(url) is False, f"Expected non-allowlisted URL to be rejected: {url!r}"
 
 
 def test_validate_url_lookalike_domain_rejected():
-    assert validate_url("https://churchofjesuschrist.org.evil.com/path") is False
+    url = "https://churchofjesuschrist.org.evil.com/path"
+    assert validate_url(url) is False, f"Expected lookalike domain to be rejected: {url!r}"
 
 
 def test_validate_url_http_scheme_allowed():
     # scheme is not restricted — only hostname matters
-    assert validate_url("http://churchofjesuschrist.org/path") is True
+    url = "http://churchofjesuschrist.org/path"
+    assert validate_url(url) is True, f"Expected http:// scheme to be allowed: {url!r}"
 
 
 def test_validate_url_malformed_url_returns_false():
-    assert validate_url("not a url at all") is False
+    url = "not a url at all"
+    assert validate_url(url) is False, f"Expected malformed URL to return False: {url!r}"
 
 
 def test_validate_url_empty_string_returns_false():
-    assert validate_url("") is False
+    assert validate_url("") is False, "Expected empty string to return False"
 
 
 def test_validate_url_bare_ldscdn_without_subdomain_rejected():
     # ldscdn.org without a subdomain is not in the allowlist (pattern is *.ldscdn.org)
-    assert validate_url("https://ldscdn.org/audio/talk.mp3") is False
+    url = "https://ldscdn.org/audio/talk.mp3"
+    assert validate_url(url) is False, f"Expected bare ldscdn.org to be rejected: {url!r}"
 
 
 def test_validate_url_never_raises_on_garbage_input():
