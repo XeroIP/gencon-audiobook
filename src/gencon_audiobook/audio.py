@@ -63,7 +63,10 @@ def _ascii_safe(text: str) -> str:
     """
     for char, replacement in _TYPOGRAPHIC_REPLACEMENTS.items():
         text = text.replace(char, replacement)
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    result = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    # If all characters were non-ASCII (e.g., non-Latin scripts), fall back to the
+    # original text so the chapter title is not silently emptied.
+    return result if result.strip() else text
 
 
 def _ffmeta_escape(value: str) -> str:
@@ -77,7 +80,7 @@ def _ffmeta_escape(value: str) -> str:
     Returns:
         Escaped string safe for use in an FFMETADATA1 file.
     """
-    for ch in ("\\", "=", ";", "#", "\n"):
+    for ch in ("\\", "=", ";", "#", "\n", "\r"):
         value = value.replace(ch, "\\" + ch)
     return value
 
@@ -530,7 +533,7 @@ def build_m4b(
     if skipped:
         logger.warning("%d talk(s) skipped during conversion: %s", len(skipped), ", ".join(skipped))
 
-    # Step 2: Write FFMETADATA1 chapter file
+    # Step 3: Write FFMETADATA1 chapter file
     # Uses a temp file so it's cleaned up even on failure
     with tempfile.TemporaryDirectory(prefix="gencon-audio-") as tmpdir:
         tmp = Path(tmpdir)
@@ -540,7 +543,7 @@ def build_m4b(
 
         _write_ffmetadata(conference, successful_talks, metadata_path)
 
-        # Step 3: Concatenate all AAC files
+        # Step 4: Concatenate all AAC files
         logger.info("Concatenating %d AAC files...", len(aac_paths))
         _write_concat_list(aac_paths, concat_path)
         _run(
@@ -556,7 +559,7 @@ def build_m4b(
             label="AAC concatenation",
         )
 
-        # Step 4: Mux to m4b with chapters and optional cover art
+        # Step 5: Mux to m4b with chapters and optional cover art
         logger.info("Muxing m4b: %s", output_path.name)
         mux_cmd: list[str] = [
             str(ffmpeg_path),
@@ -582,7 +585,7 @@ def build_m4b(
         mux_cmd += ["-y", str(output_path)]
         _run(mux_cmd, label="m4b mux")
 
-    # Step 5: Delete individual AAC files (intermediate cleaned by TemporaryDirectory)
+    # Step 6: Delete individual AAC files (intermediate cleaned by TemporaryDirectory)
     for aac_path in aac_paths:
         try:
             aac_path.unlink()
@@ -590,6 +593,6 @@ def build_m4b(
         except OSError as exc:
             logger.warning("Could not delete %s: %s", aac_path, exc)
 
-    # Step 6: Verify
+    # Step 7: Verify
     _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)
