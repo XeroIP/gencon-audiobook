@@ -7,6 +7,7 @@ import logging
 import subprocess
 import tempfile
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 from mutagen.mp4 import MP4
@@ -27,6 +28,27 @@ logger = logging.getLogger(__name__)
 
 class AudioError(Exception):
     """Raised when an ffmpeg step fails."""
+
+
+@dataclass
+class BuildStats:
+    """Quality and chapter statistics returned by build_m4b.
+
+    Attributes:
+        source_bitrate: Detected bitrate of the source MP3s (e.g., "128k").
+        source_sample_rate: Detected sample rate of the source MP3s in Hz.
+        output_bitrate: AAC encoding bitrate used (e.g., "128k").
+        output_sample_rate: AAC sample rate used in Hz.
+        chapter_count: Number of chapters written to the m4b.
+        duration_seconds: Total audio duration in seconds.
+    """
+
+    source_bitrate: str
+    source_sample_rate: int
+    output_bitrate: str
+    output_sample_rate: int
+    chapter_count: int
+    duration_seconds: float
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +460,7 @@ def build_m4b(
     ffprobe_path: Path,
     bitrate: str | None = None,
     sample_rate: int | None = None,
-) -> None:
+) -> BuildStats:
     """Build a chaptered m4b audiobook from downloaded MP3 files.
 
     Process:
@@ -462,6 +484,9 @@ def build_m4b(
         bitrate: AAC encoding bitrate (e.g., "64k", "128k"). Defaults to source bitrate.
         sample_rate: Output sample rate in Hz. Defaults to source sample rate.
 
+    Returns:
+        BuildStats with source/output quality and chapter statistics.
+
     Raises:
         AudioError: if any ffmpeg step fails or no valid talks are found.
     """
@@ -471,6 +496,10 @@ def build_m4b(
     aac_paths: list[Path] = []
     successful_talks: list[Talk] = []
     skipped: list[str] = []
+
+    # Tracked separately so BuildStats can report source quality vs. output quality.
+    source_bitrate: str | None = None
+    source_sample_rate: int | None = None
 
     # Step 1: Auto-detect source quality unless the caller explicitly overrode it.
     # Probe the first available MP3 — all talks in a conference come from the same
@@ -485,6 +514,8 @@ def build_m4b(
     )
     if first_mp3 is not None:
         detected_bitrate, detected_sample_rate = _probe_source_quality(first_mp3, ffprobe_path)
+        source_bitrate = detected_bitrate
+        source_sample_rate = detected_sample_rate
         if bitrate is None:
             bitrate = detected_bitrate
         if sample_rate is None:
@@ -493,6 +524,9 @@ def build_m4b(
     # Final fallback if no MP3s exist yet or probe returned nothing
     bitrate = bitrate or _FALLBACK_BITRATE
     sample_rate = sample_rate or _FALLBACK_SAMPLE_RATE
+    # If probe failed entirely, report source quality == output quality
+    source_bitrate = source_bitrate or bitrate
+    source_sample_rate = source_sample_rate or sample_rate
 
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
@@ -598,3 +632,12 @@ def build_m4b(
     # Step 7: Verify
     _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)
+
+    return BuildStats(
+        source_bitrate=source_bitrate,
+        source_sample_rate=source_sample_rate,
+        output_bitrate=bitrate,
+        output_sample_rate=sample_rate,
+        chapter_count=len(successful_talks),
+        duration_seconds=sum(t.duration_seconds for t in successful_talks),
+    )
