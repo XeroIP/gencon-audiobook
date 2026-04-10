@@ -13,6 +13,7 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
     TimeRemainingColumn,
@@ -282,6 +283,7 @@ def download_conference(
     )
 
     overall_progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
@@ -289,6 +291,7 @@ def download_conference(
         TimeRemainingColumn(),
     )
     file_progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),

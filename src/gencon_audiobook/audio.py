@@ -532,6 +532,7 @@ def build_m4b(
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
     progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
