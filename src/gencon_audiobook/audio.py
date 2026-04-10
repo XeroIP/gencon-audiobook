@@ -15,6 +15,7 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
     TimeRemainingColumn,
@@ -630,7 +631,9 @@ def build_m4b(
             logger.warning("Could not delete %s: %s", aac_path, exc)
 
     # Step 7: Verify
-    _verify_m4b(output_path, conference, ffprobe_path)
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+        sp.add_task(f"Verifying m4b: {output_path.name}")
+        _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)
 
     return BuildStats(

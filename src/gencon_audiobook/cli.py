@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .audio import AudioError, BuildStats, build_m4b
@@ -134,9 +135,10 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     Raises:
         SystemExit: if the filter matches nothing or the list cannot be fetched.
     """
-    console.print("Fetching available conferences...")
     try:
-        refs = fetch_available_conferences()
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+            sp.add_task("Fetching available conferences...")
+            refs = fetch_available_conferences()
     except ScraperError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
@@ -340,8 +342,7 @@ def _run(
 
     conf_title, conf_url = _select_conference(conference)
 
-    # Scrape conference details
-    console.print(f"Scraping conference: {conf_title}")
+    # Scrape conference details — progress bar printed inside scrape_conference()
     t0 = time.monotonic()
     try:
         conf_obj = scrape_conference(conf_url)
@@ -419,7 +420,6 @@ def _run(
 
     # Build EPUB companion
     if not audiobook_only:
-        console.print("Building epub...")
         if epub_path.exists() and not overwrite:
             console.print(
                 f"EPUB already exists (use --overwrite to rebuild): {epub_path.name}"
@@ -427,11 +427,16 @@ def _run(
         else:
             t0 = time.monotonic()
             try:
-                build_epub(
-                    conference=conf_obj,
-                    images_dir=conf_output_dir,
-                    output_path=epub_path,
-                )
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                ) as sp:
+                    sp.add_task(f"Building EPUB: {conf_obj.title}")
+                    build_epub(
+                        conference=conf_obj,
+                        images_dir=conf_output_dir,
+                        output_path=epub_path,
+                    )
             except EpubError as exc:
                 click.echo(f"Error: EPUB build failed.\n{exc}", err=True)
                 sys.exit(1)
