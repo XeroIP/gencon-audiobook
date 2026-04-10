@@ -790,6 +790,11 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def reset_robots_cache() -> None:
+    """Clear the cached robots.txt parsers (for testing only)."""
+    _robots_cache.clear()
+
+
 def fetch_available_conferences() -> list[ConferenceRef]:
     """Fetch all available conferences from the archive page.
 
