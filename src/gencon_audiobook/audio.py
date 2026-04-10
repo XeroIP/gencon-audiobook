@@ -85,7 +85,9 @@ def _ffmeta_escape(value: str) -> str:
     return value
 
 
-_SUBPROCESS_TIMEOUT = 600  # 10 minutes — generous for large conference builds
+_SUBPROCESS_TIMEOUT = 600   # 10 minutes — generous for large conference builds
+_FALLBACK_BITRATE = "64k"   # used when ffprobe quality probe fails
+_FALLBACK_SAMPLE_RATE = 44100  # used when ffprobe quality probe fails
 
 
 def _run(cmd: list[str], label: str) -> subprocess.CompletedProcess[str]:
@@ -200,16 +202,16 @@ def _probe_source_quality(mp3_path: Path, ffprobe_path: Path) -> tuple[str, int]
 
         logger.warning(
             "Could not parse quality from %s (bit_rate=%r, sample_rate=%r) "
-            "— falling back to 64k/44100",
-            mp3_path.name, bit_rate, sample_rate,
+            "— falling back to %s/%d",
+            mp3_path.name, bit_rate, sample_rate, _FALLBACK_BITRATE, _FALLBACK_SAMPLE_RATE,
         )
     except (AudioError, OSError) as exc:
         # OSError covers FileNotFoundError when the ffprobe binary itself is missing.
         logger.warning(
-            "ffprobe quality probe failed for %s: %s — falling back to 64k/44100",
-            mp3_path.name, exc,
+            "ffprobe quality probe failed for %s: %s — falling back to %s/%d",
+            mp3_path.name, exc, _FALLBACK_BITRATE, _FALLBACK_SAMPLE_RATE,
         )
-    return "64k", 44100
+    return _FALLBACK_BITRATE, _FALLBACK_SAMPLE_RATE
 
 
 def _derive_ffprobe(ffmpeg_path: Path) -> Path:
@@ -489,8 +491,8 @@ def build_m4b(
             sample_rate = detected_sample_rate
         logger.info("Source quality: %s / %d Hz", bitrate, sample_rate)
     # Final fallback if no MP3s exist yet or probe returned nothing
-    bitrate = bitrate or "64k"
-    sample_rate = sample_rate or 44100
+    bitrate = bitrate or _FALLBACK_BITRATE
+    sample_rate = sample_rate or _FALLBACK_SAMPLE_RATE
 
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))

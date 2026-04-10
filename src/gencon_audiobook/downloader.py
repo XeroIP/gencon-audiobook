@@ -23,6 +23,9 @@ from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
 
+_DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB chunks for streaming downloads
+_JPEG_QUALITY = 85              # JPEG quality for converted images
+
 
 class DownloadError(Exception):
     """Raised when a file download fails after all retries."""
@@ -80,7 +83,7 @@ def download_file(
                 resp.raise_for_status()
                 tmp.parent.mkdir(parents=True, exist_ok=True)
                 with tmp.open("wb") as fh:
-                    for chunk in resp.iter_content(chunk_size=65536):
+                    for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
                         if chunk:
                             fh.write(chunk)
 
@@ -111,14 +114,14 @@ def _image_to_jpeg(data: bytes) -> bytes:
     Returns:
         JPEG-encoded bytes.
     """
-    img = Image.open(BytesIO(data))
-    # Convert palette/transparency modes that JPEG can't handle
-    if img.mode in ("RGBA", "P", "LA"):
-        img = img.convert("RGB")
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
-    out = BytesIO()
-    img.save(out, format="JPEG", quality=85, optimize=True)
+    with Image.open(BytesIO(data)) as img:
+        # Convert palette/transparency modes that JPEG can't handle
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return out.getvalue()
 
 
