@@ -38,6 +38,51 @@ jobs:
           -v
           --tb=short
 
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check src/
+
+      - name: mypy
+        run: mypy src/gencon_audiobook/
+
+  coverage:
+    name: Coverage report
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        run: >
+          pytest tests/
+          --ignore=tests/test_scraper_live.py
+          --ignore=tests/test_integration.py
+          --cov=gencon_audiobook
+          --cov-report=term-missing
+          --tb=short
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

@@ -114,12 +114,11 @@ def _image_to_jpeg(data: bytes) -> bytes:
     Returns:
         JPEG-encoded bytes.
     """
-    with Image.open(BytesIO(data)) as img:
-        # Convert palette/transparency modes that JPEG can't handle
-        if img.mode in ("RGBA", "P", "LA"):
-            img = img.convert("RGB")
-        elif img.mode != "RGB":
-            img = img.convert("RGB")
+    with Image.open(BytesIO(data)) as raw:
+        # Convert palette/transparency modes that JPEG can't handle.
+        # PIL stubs type .convert() as Image.Image; cast via local var avoids
+        # the ImageFile/Image mismatch that confuses mypy.
+        img: Image.Image = raw.convert("RGB") if raw.mode != "RGB" else raw
         out = BytesIO()
         img.save(out, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return out.getvalue()
@@ -303,7 +302,7 @@ def download_conference(
     with overall_progress, file_progress:
         overall_task = overall_progress.add_task("Downloading files", total=len(queue))
 
-        for url, dest, label, is_image, talk in queue:
+        for url, dest, label, is_image, queue_talk in queue:
             overall_progress.update(overall_task, description=label)
             try:
                 if is_image:
@@ -314,8 +313,8 @@ def download_conference(
             except (DownloadError, ValueError) as exc:
                 logger.error("Failed to download %s: %s", label, exc)
                 failed.append(label)
-                if talk is not None:
-                    failed_talks.append(talk)
+                if queue_talk is not None:
+                    failed_talks.append(queue_talk)
             finally:
                 overall_progress.advance(overall_task)
 

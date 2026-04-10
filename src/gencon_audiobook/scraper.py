@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any  # JSON decode returns Any; no narrower type available
+from typing import Any, cast  # JSON decode returns Any; no narrower type available
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -303,7 +303,7 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
         # Base64-encoded JSON string
         try:
             json_bytes = base64.b64decode(match.group(1))
-            return json.loads(json_bytes)
+            return cast(dict[str, Any], json.loads(json_bytes))
         except Exception as exc:
             logger.debug("Failed to base64-decode __INITIAL_STATE__: %s", exc)
 
@@ -315,7 +315,7 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
         if end > 0:
             json_str = json_str[:end].rstrip("; \n\r\t")
         try:
-            return json.loads(json_str)
+            return cast(dict[str, Any], json.loads(json_str))
         except json.JSONDecodeError as exc:
             logger.debug("Failed to parse __INITIAL_STATE__ as raw JSON: %s", exc)
 
@@ -553,18 +553,18 @@ def _extract_talk_title(a: Tag) -> str:
     Fallbacks: <p class="title"> inside <h4>, then <h4> text.
     """
     div = a.find("div")
-    if div:
+    if isinstance(div, Tag):
         ps = div.find_all("p", recursive=False)
         if ps:
-            return ps[0].get_text(strip=True)
+            return str(ps[0].get_text(strip=True))
     h4 = a.find("h4")
-    if h4:
+    if isinstance(h4, Tag):
         p = h4.find("p", class_="title")
-        if p:
+        if isinstance(p, Tag):
             return p.get_text(strip=True)
         return h4.get_text(strip=True)
     p = a.find("p", class_="title")
-    if p:
+    if isinstance(p, Tag):
         return p.get_text(strip=True)
     return ""
 
@@ -579,15 +579,15 @@ def _extract_talk_speaker(a: Tag) -> str:
     Fallbacks: <p class="primaryMeta">, <h6> text.
     """
     div = a.find("div")
-    if div:
+    if isinstance(div, Tag):
         ps = div.find_all("p", recursive=False)
         if len(ps) >= 2:
-            return ps[1].get_text(strip=True)
+            return str(ps[1].get_text(strip=True))
     el = a.find("p", class_="primaryMeta")
-    if el:
+    if isinstance(el, Tag):
         return el.get_text(strip=True)
     h6 = a.find("h6")
-    if h6:
+    if isinstance(h6, Tag):
         return h6.get_text(strip=True)
     return ""
 
@@ -720,15 +720,20 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
     if not result["mp3_url"]:
         # Fallback A: <source type="audio/mpeg"> inside a <video>
         source = soup.find("source", {"type": "audio/mpeg"})
-        if source and source.get("src") and validate_url(source["src"]):
-            result["mp3_url"] = source["src"]
-            logger.debug("mp3_url (video source): %s", result["mp3_url"])
+        if isinstance(source, Tag):
+            src_val = source.get("src")
+            if isinstance(src_val, str) and validate_url(src_val):
+                result["mp3_url"] = src_val
+                logger.debug("mp3_url (video source): %s", result["mp3_url"])
 
     if not result["mp3_url"]:
         logger.warning("MP3 selectors failed for %s, trying href/src scan", talk_url)
         # Fallback B: any <a> or <source> with an .mp3 URL on an allowed domain
         for tag in soup.find_all(["a", "source"]):
-            href = tag.get("href") or tag.get("src") or ""
+            if not isinstance(tag, Tag):
+                continue
+            href_val = tag.get("href") or tag.get("src") or ""
+            href = str(href_val)
             if href.endswith(".mp3") and validate_url(href):
                 result["mp3_url"] = href
                 logger.debug("mp3_url (href/src scan): %s", href)
@@ -738,7 +743,7 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
     body = soup.find("div", class_="body-block")
     if body:
         result["transcript_html"] = str(body)
-        logger.debug("transcript (primary div.body-block): %d chars", len(result["transcript_html"]))
+        logger.debug("transcript (primary div.body-block): %d chars", len(result["transcript_html"] or ""))
 
     if not result["transcript_html"]:
         logger.warning("Primary transcript selector failed for %s, trying fallback", talk_url)
@@ -772,8 +777,10 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
 
     # Speaker photo — primary: img whose src contains /imgs/ and is on an allowed domain
     for img in soup.find_all("img", src=True):
-        src = img["src"]
-        if "/imgs/" in src and validate_url(src):
+        if not isinstance(img, Tag):
+            continue
+        src = img.get("src")
+        if isinstance(src, str) and "/imgs/" in src and validate_url(src):
             result["speaker_image_url"] = src
             logger.debug("speaker_image_url (primary /imgs/): %s", src)
             break
@@ -781,8 +788,10 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
     if not result["speaker_image_url"]:
         # Fallback: og:image meta tag
         og = soup.find("meta", property="og:image")
-        if og and og.get("content") and validate_url(og["content"]):
-            result["speaker_image_url"] = og["content"]
+        if isinstance(og, Tag):
+            content = og.get("content")
+            if isinstance(content, str) and validate_url(content):
+                result["speaker_image_url"] = content
 
     return result
 
@@ -931,13 +940,17 @@ def _find_cover_image(soup: BeautifulSoup) -> str | None:
     """Try to find a conference cover image URL from a parsed page."""
     # Primary: og:image meta tag
     og = soup.find("meta", property="og:image")
-    if og and og.get("content") and validate_url(og["content"]):
-        return og["content"]
+    if isinstance(og, Tag):
+        content = og.get("content")
+        if isinstance(content, str) and validate_url(content):
+            return content
 
     # Fallback: first /imgs/ image on the page
     for img in soup.find_all("img", src=True):
-        src = img["src"]
-        if "/imgs/" in src and validate_url(src):
+        if not isinstance(img, Tag):
+            continue
+        src = img.get("src")
+        if isinstance(src, str) and "/imgs/" in src and validate_url(src):
             return src
 
     return None
