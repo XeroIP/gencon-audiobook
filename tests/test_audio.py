@@ -15,7 +15,7 @@ import pytest
 from PIL import Image
 
 from conftest import FFMPEG as _FFMPEG, FFPROBE as _FFPROBE, make_silent_mp3, requires_ffmpeg
-from gencon_audiobook.audio import AudioError, _ascii_safe, _probe_source_quality, build_m4b, convert_mp3_to_aac
+from gencon_audiobook.audio import AudioError, BuildStats, _ascii_safe, _probe_source_quality, build_m4b, convert_mp3_to_aac
 from gencon_audiobook.models import Conference, Session, Talk
 
 
@@ -500,7 +500,12 @@ def test_build_m4b_auto_detects_source_quality(tmp_path: Path) -> None:
     output = tmp_path / "output.m4b"
 
     # No bitrate or sample_rate passed — should auto-detect from source
-    build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+    stats = build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
 
     assert output.exists(), "m4b should be produced with auto-detected quality"
     assert output.stat().st_size > 0
+    assert stats.chapter_count == 2, f"Expected 2 chapters, got {stats.chapter_count}"
+    assert stats.duration_seconds > 0, f"Expected positive duration, got {stats.duration_seconds}"
+    assert stats.source_bitrate, "source_bitrate should be populated"
+    assert stats.output_bitrate, "output_bitrate should be populated"
+    assert stats.source_sample_rate > 0, "source_sample_rate should be positive"

@@ -325,7 +325,8 @@ def test_completion_summary_printed(tmp_path: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
 
-    assert "Output saved to" in result.output, result.output
+    assert "Completion Report" in result.output, result.output
+    assert "Audiobook:" in result.output, result.output
 
 
 # ---------------------------------------------------------------------------

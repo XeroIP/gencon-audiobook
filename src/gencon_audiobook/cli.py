@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -12,7 +13,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from . import __version__
-from .audio import AudioError, build_m4b
+from .audio import AudioError, BuildStats, build_m4b
 from .downloader import DownloadError, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
@@ -254,6 +255,76 @@ def main(
         sys.exit(1)
 
 
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds as HH:MM:SS.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        Duration string in HH:MM:SS format.
+    """
+    total = int(seconds)
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def _print_completion_report(
+    conf_output_dir: Path,
+    m4b_path: Path,
+    epub_path: Path,
+    failed_talks: list[Talk],
+    stats: BuildStats | None,
+    phase_times: dict[str, float],
+) -> None:
+    """Print a structured completion report to the console.
+
+    Args:
+        conf_output_dir: Conference output directory.
+        m4b_path: Path to the built m4b file (may not exist if epub-only).
+        epub_path: Path to the built epub file (may not exist if audiobook-only).
+        failed_talks: Talks that failed to download.
+        stats: BuildStats from build_m4b, or None if audiobook was skipped/cached.
+        phase_times: Elapsed seconds per phase label.
+    """
+    console.print("")
+    console.print("--- Completion Report ---")
+
+    if stats is not None:
+        console.print(f"  Duration:      {_format_duration(stats.duration_seconds)}")
+        console.print(f"  Chapters:      {stats.chapter_count}")
+        if stats.source_bitrate != stats.output_bitrate or stats.source_sample_rate != stats.output_sample_rate:
+            console.print(f"  Source audio:  {stats.source_bitrate} / {stats.source_sample_rate} Hz")
+            console.print(f"  Output audio:  {stats.output_bitrate} / {stats.output_sample_rate} Hz")
+        else:
+            console.print(f"  Audio quality: {stats.output_bitrate} / {stats.output_sample_rate} Hz")
+
+    if m4b_path.exists():
+        size_mb = m4b_path.stat().st_size / 1_048_576
+        console.print(f"  Audiobook:     {m4b_path.name} ({size_mb:.0f} MB)")
+
+    if epub_path.exists():
+        size_mb = epub_path.stat().st_size / 1_048_576
+        console.print(f"  EPUB:          {epub_path.name} ({size_mb:.1f} MB)")
+
+    if phase_times:
+        parts = ", ".join(f"{label} {elapsed:.0f}s" for label, elapsed in phase_times.items())
+        console.print(f"  Timing:        {parts}")
+
+    if len(failed_talks) > 0:
+        console.print(
+            f"\n  Warning: {len(failed_talks)} talk(s) could not be downloaded "
+            "and are not included in the output:"
+        )
+        for talk in failed_talks:
+            console.print(f"    - {talk.title} ({talk.speaker})")
+
+    console.print(f"\n  Output: {conf_output_dir}")
+    console.print(f"  Log:    {conf_output_dir / _LOG_FILENAME}")
+
+
 def _run(
     output: str,
     conference: str | None,
@@ -265,16 +336,19 @@ def _run(
 ) -> None:
     """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()
+    phase_times: dict[str, float] = {}
 
     conf_title, conf_url = _select_conference(conference)
 
     # Scrape conference details
     console.print(f"Scraping conference: {conf_title}")
+    t0 = time.monotonic()
     try:
         conf_obj = scrape_conference(conf_url)
     except ScraperError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+    phase_times["scrape"] = time.monotonic() - t0
 
     conf_output_dir = output_dir / conf_obj.title
 
@@ -294,6 +368,7 @@ def _run(
 
     # Download audio (skipped for --epub-only) and images.
     console.print(f"Downloading files for {len(conf_obj.talks)} talks...")
+    t0 = time.monotonic()
     try:
         failed_talks: list[Talk] = download_conference(
             conf_obj, conf_output_dir, skip_audio=epub_only
@@ -301,9 +376,11 @@ def _run(
     except DownloadError as exc:
         click.echo(f"Error: Download failed: {exc}", err=True)
         sys.exit(1)
+    phase_times["download"] = time.monotonic() - t0
 
     m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
     epub_path = conf_output_dir / f"{conf_obj.title}.epub"
+    build_stats: BuildStats | None = None
 
     # Build m4b audiobook
     if not epub_only:
@@ -323,8 +400,9 @@ def _run(
                 f"Audiobook already exists (use --overwrite to rebuild): {m4b_path.name}"
             )
         else:
+            t0 = time.monotonic()
             try:
-                build_m4b(
+                build_stats = build_m4b(
                     conference=conf_obj,
                     audio_dir=audio_dir,
                     output_path=m4b_path,
@@ -337,6 +415,7 @@ def _run(
             except AudioError as exc:
                 click.echo(f"Error: Audiobook build failed.\n{exc}", err=True)
                 sys.exit(1)
+            phase_times["audiobook"] = time.monotonic() - t0
 
     # Build EPUB companion
     if not audiobook_only:
@@ -346,6 +425,7 @@ def _run(
                 f"EPUB already exists (use --overwrite to rebuild): {epub_path.name}"
             )
         else:
+            t0 = time.monotonic()
             try:
                 build_epub(
                     conference=conf_obj,
@@ -355,24 +435,13 @@ def _run(
             except EpubError as exc:
                 click.echo(f"Error: EPUB build failed.\n{exc}", err=True)
                 sys.exit(1)
+            phase_times["epub"] = time.monotonic() - t0
 
-    # Summary
-    console.print("")
-    console.print(f"Output saved to: {conf_output_dir}")
-    if m4b_path.exists():
-        size_mb = m4b_path.stat().st_size / 1_048_576
-        chapter_count = len(conf_obj.talks)
-        console.print(f"  {m4b_path.name} ({size_mb:.0f} MB, {chapter_count} chapters)")
-    if epub_path.exists():
-        size_mb = epub_path.stat().st_size / 1_048_576
-        talk_count = len(conf_obj.talks)
-        console.print(f"  {epub_path.name} ({size_mb:.1f} MB, {talk_count} talks)")
-
-    if failed_talks:
-        console.print(
-            f"\n[yellow]Warning:[/yellow] {len(failed_talks)} talk(s) could not be "
-            "downloaded and are not included in the output:"
-        )
-        for talk in failed_talks:
-            console.print(f"  - {talk.title} ({talk.speaker})")
-        console.print(f"For details, see: {conf_output_dir / _LOG_FILENAME}")
+    _print_completion_report(
+        conf_output_dir=conf_output_dir,
+        m4b_path=m4b_path,
+        epub_path=epub_path,
+        failed_talks=failed_talks,
+        stats=build_stats,
+        phase_times=phase_times,
+    )
