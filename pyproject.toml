@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gencon-audiobook"
-version = "0.1.1"
+version = "0.1.2"
 description = "Download General Conference talks as a complete audiobook (m4b) and epub with full transcripts"
 readme = "README.md"
 requires-python = ">=3.10"
