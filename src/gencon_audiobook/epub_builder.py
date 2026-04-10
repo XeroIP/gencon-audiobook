@@ -23,6 +23,7 @@ _COPYRIGHT = (
 )
 
 _MAX_PHOTO_WIDTH = 300  # px — per epub-style.md
+_JPEG_QUALITY = 85      # JPEG quality for all embedded images
 
 # Void elements that must be self-closed in XHTML
 _VOID_RE = re.compile(
@@ -185,15 +186,15 @@ def _resize_photo(src_path: Path) -> bytes:
     Returns:
         JPEG bytes of the (possibly resized) image.
     """
-    img = Image.open(src_path)
-    if img.width > _MAX_PHOTO_WIDTH:
-        ratio = _MAX_PHOTO_WIDTH / img.width
-        new_size = (_MAX_PHOTO_WIDTH, int(img.height * ratio))
-        img = img.resize(new_size, Image.LANCZOS)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85, optimize=True)
+    with Image.open(src_path) as img:
+        if img.width > _MAX_PHOTO_WIDTH:
+            ratio = _MAX_PHOTO_WIDTH / img.width
+            new_size = (_MAX_PHOTO_WIDTH, int(img.height * ratio))
+            img = img.resize(new_size, Image.LANCZOS)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return buf.getvalue()
 
 

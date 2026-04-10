@@ -74,7 +74,7 @@ def validate_url(url: str) -> bool:
     Allowed domains:
     - churchofjesuschrist.org
     - *.ldscdn.org
-    - media*.churchofjesuschrist.org
+    - *.churchofjesuschrist.org
 
     Never raises — invalid or malformed URLs return False.
 

@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any  # JSON decode returns Any; no narrower type available
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -27,6 +27,8 @@ _REQUEST_DELAY = 0.5
 _CONNECT_TIMEOUT = 15
 _READ_TIMEOUT = 30
 _MAX_RETRIES = 3
+_MIN_RESPONSE_LENGTH = 1000   # responses shorter than this are suspiciously small
+_CLOUDFLARE_PAGE_LENGTH = 5000  # challenge pages are tiny; real pages are much larger
 
 # Matches /study/general-conference/YYYY/MM (conference listing URL)
 # Allows trailing query strings like ?lang=eng
@@ -251,10 +253,10 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
             response.raise_for_status()
 
             body = _decode_response(response)
-            if len(body) < 1000:
+            if len(body) < _MIN_RESPONSE_LENGTH:
                 logger.warning("Suspiciously short response for %s (%d chars)", url, len(body))
             if "cloudflare" in body.lower() or (
-                "challenge" in body.lower() and len(body) < 5000
+                "challenge" in body.lower() and len(body) < _CLOUDFLARE_PAGE_LENGTH
             ):
                 raise ScraperError(
                     "Access was blocked by the website. This may be temporary. "

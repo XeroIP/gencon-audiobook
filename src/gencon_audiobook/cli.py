@@ -7,10 +7,6 @@ import shutil
 import sys
 from pathlib import Path
 
-_LOG_FILENAME = "gencon-audiobook.log"
-_MIN_PYTHON = (3, 10)
-_DISK_WARN_MB = 500
-
 import click
 from rich.console import Console
 from rich.logging import RichHandler
@@ -24,6 +20,10 @@ from .models import Talk
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
 logger = logging.getLogger(__name__)
+
+_LOG_FILENAME = "gencon-audiobook.log"
+_MIN_PYTHON = (3, 10)
+_DISK_WARN_MB = 500
 
 # Module-level console so helpers can print without threading a Console argument.
 console = Console()
