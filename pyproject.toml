@@ -26,7 +26,7 @@ dependencies = [
     "requests>=2.28",
     "beautifulsoup4>=4.11",
     "mutagen>=1.47",
-    "Pillow>=9.0",
+    "Pillow>=9.1",
     "rich>=13.0",
     "static-ffmpeg>=2.7",
 ]
@@ -37,6 +37,10 @@ dev = [
     "pytest-cov>=4.0",
     "responses>=0.23",
     "pip-audit>=2.0",
+    "ruff>=0.3",
+    "mypy>=1.9",
+    "types-requests>=2.31",
+    "types-beautifulsoup4>=4.12",
 ]
 
 [project.urls]
@@ -49,6 +53,22 @@ gencon-audiobook = "gencon_audiobook.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gencon_audiobook"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]  # line length — not enforced
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

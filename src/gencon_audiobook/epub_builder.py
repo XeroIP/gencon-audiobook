@@ -136,7 +136,7 @@ def _void_to_xhtml(html: str) -> str:
         tag = m.group(1)
         attrs = m.group(2) or ""
         if attrs.rstrip().endswith("/"):
-            return m.group(0)  # already self-closed
+            return str(m.group(0))  # already self-closed
         return f"<{tag}{attrs}/>"
     return _VOID_RE.sub(_close, html)
 
@@ -186,11 +186,14 @@ def _resize_photo(src_path: Path) -> bytes:
     Returns:
         JPEG bytes of the (possibly resized) image.
     """
-    with Image.open(src_path) as img:
+    with Image.open(src_path) as raw:
+        # PIL stubs type resize()/convert() as Image.Image, not ImageFile.
+        # Use a typed local variable to avoid mypy's ImageFile/Image mismatch.
+        img: Image.Image = raw
         if img.width > _MAX_PHOTO_WIDTH:
             ratio = _MAX_PHOTO_WIDTH / img.width
             new_size = (_MAX_PHOTO_WIDTH, int(img.height * ratio))
-            img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
         if img.mode != "RGB":
             img = img.convert("RGB")
         buf = io.BytesIO()
