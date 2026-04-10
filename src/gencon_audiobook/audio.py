@@ -6,6 +6,8 @@ import json
 import logging
 import subprocess
 import tempfile
+import threading
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +18,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
 )
@@ -148,6 +151,84 @@ def _run(cmd: list[str], label: str) -> subprocess.CompletedProcess[str]:
             f"stderr: {result.stderr[-2000:]}"
         )
     return result
+
+
+def _run_ffmpeg_with_progress(
+    cmd: list[str],
+    label: str,
+    source_duration_s: float,
+    progress: Progress,
+    task_id: TaskID,
+) -> None:
+    """Run an ffmpeg command, updating a Rich progress task as encoding proceeds.
+
+    The command must already include `-progress pipe:1 -nostats` so ffmpeg writes
+    key=value progress lines to stdout. A watchdog timer kills the process if it
+    exceeds _SUBPROCESS_TIMEOUT seconds without finishing.
+
+    Args:
+        cmd: Complete ffmpeg command including -progress pipe:1 -nostats flags.
+        label: Human-readable description for error messages.
+        source_duration_s: Source audio duration in seconds (used as progress total).
+        progress: Rich Progress instance to update.
+        task_id: Task ID within progress to update.
+
+    Raises:
+        AudioError: if ffmpeg exits with non-zero code or the watchdog kills it.
+    """
+    logger.debug("Running (streaming): %s", " ".join(cmd))
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    killed_by_watchdog = False
+
+    def _watchdog() -> None:
+        nonlocal killed_by_watchdog
+        if proc.poll() is None:
+            killed_by_watchdog = True
+            proc.kill()
+
+    timer = threading.Timer(_SUBPROCESS_TIMEOUT, _watchdog)
+    timer.start()
+    try:
+        assert proc.stdout is not None  # guaranteed by stdout=PIPE
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith("out_time_us="):
+                try:
+                    us = int(line.split("=", 1)[1])
+                    seconds = min(us / 1_000_000, source_duration_s)
+                    progress.update(task_id, completed=seconds)
+                except (ValueError, IndexError):
+                    pass
+            elif line == "progress=end":
+                break
+    finally:
+        timer.cancel()
+
+    proc.wait()
+
+    if killed_by_watchdog:
+        raise AudioError(
+            f"{label} timed out after {_SUBPROCESS_TIMEOUT}s. "
+            "The ffmpeg process was killed. Try with fewer talks or check for corrupt MP3 files."
+        )
+
+    if proc.returncode != 0:
+        stderr = ""
+        if proc.stderr:
+            stderr = proc.stderr.read()
+        raise AudioError(
+            f"{label} failed (exit {proc.returncode}).\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"stderr: {stderr[-2000:]}"
+        )
 
 
 def _get_duration_ffprobe(path: Path, ffprobe_path: Path) -> float:
@@ -412,8 +493,16 @@ def convert_mp3_to_aac(
     ffprobe_path: Path,
     bitrate: str = "64k",
     sample_rate: int = 44100,
+    *,
+    source_duration_s: float | None = None,
+    progress: Progress | None = None,
+    progress_task_id: TaskID | None = None,
 ) -> float:
     """Convert an MP3 file to AAC-LC / mono.
+
+    When source_duration_s, progress, and progress_task_id are all provided, uses
+    ffmpeg's -progress flag to stream encoding progress to the Rich task in real time.
+    Falls back to a simple blocking call if -progress is unsupported.
 
     Args:
         mp3_path: Input MP3 file.
@@ -422,6 +511,9 @@ def convert_mp3_to_aac(
         ffprobe_path: Path to ffprobe binary.
         bitrate: AAC encoding bitrate as an ffmpeg bitrate string (e.g., "64k", "32k").
         sample_rate: Output sample rate in Hz (e.g., 44100, 22050).
+        source_duration_s: Source duration in seconds for the inner progress bar total.
+        progress: Rich Progress instance to update during encoding.
+        progress_task_id: Task ID within progress to update.
 
     Returns:
         Duration of the audio in seconds.
@@ -434,20 +526,43 @@ def convert_mp3_to_aac(
 
     aac_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _run(
-        [
-            str(ffmpeg_path),
-            "-i", str(mp3_path),
-            "-vn",          # strip embedded cover art / video streams from the MP3
-            "-c:a", "aac",
-            "-b:a", bitrate,
-            "-ar", str(sample_rate),
-            "-ac", "1",
-            "-y",
-            str(aac_path),
-        ],
-        label=f"MP3→AAC conversion of {mp3_path.name}",
+    label = f"MP3→AAC conversion of {mp3_path.name}"
+    base_cmd = [
+        str(ffmpeg_path),
+        "-i", str(mp3_path),
+        "-vn",          # strip embedded cover art / video streams from the MP3
+        "-c:a", "aac",
+        "-b:a", bitrate,
+        "-ar", str(sample_rate),
+        "-ac", "1",
+        "-y",
+        str(aac_path),
+    ]
+
+    use_progress = (
+        source_duration_s is not None
+        and source_duration_s > 0
+        and progress is not None
+        and progress_task_id is not None
     )
+
+    if use_progress:
+        assert source_duration_s is not None
+        assert progress is not None
+        assert progress_task_id is not None
+        # Insert -progress and -nostats right after the ffmpeg binary
+        progress_cmd = [base_cmd[0], "-progress", "pipe:1", "-nostats"] + base_cmd[1:]
+        try:
+            _run_ffmpeg_with_progress(progress_cmd, label, source_duration_s, progress, progress_task_id)
+        except AudioError:
+            # -progress may not be supported by this ffmpeg build; retry without it
+            logger.warning(
+                "ffmpeg -progress streaming failed for %s — falling back to non-streaming mode",
+                mp3_path.name,
+            )
+            _run(base_cmd, label=label)
+    else:
+        _run(base_cmd, label=label)
 
     return _get_duration_ffprobe(aac_path, ffprobe_path)
 
@@ -531,7 +646,7 @@ def build_m4b(
 
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
-    progress = Progress(
+    conv_progress = Progress(
         SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
@@ -539,20 +654,40 @@ def build_m4b(
         TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
     )
-    with progress:
-        task = progress.add_task("Converting to AAC", total=len(talks))
+    with conv_progress:
+        outer_task = conv_progress.add_task("Converting to AAC", total=len(talks))
+        inner_task = conv_progress.add_task("", total=1.0, visible=False)
         for talk in talks:
-            progress.update(task, description=talk.title[:60])
+            conv_progress.update(outer_task, description=talk.title[:60])
             mp3_path = audio_dir / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
             if not mp3_path.exists():
                 logger.warning("MP3 not found for talk %r (%s) — skipping", talk.title, mp3_path)
                 skipped.append(talk.title)
-                progress.advance(task)
+                conv_progress.advance(outer_task)
                 continue
+
+            # Probe source duration for the inner per-file progress bar.
+            source_dur: float | None = None
+            try:
+                source_dur = _get_duration_ffprobe(mp3_path, ffprobe_path)
+                conv_progress.update(
+                    inner_task,
+                    completed=0,
+                    total=source_dur,
+                    visible=True,
+                    description="Converting...",
+                )
+            except AudioError:
+                conv_progress.update(inner_task, visible=False)
 
             aac_path = mp3_path.with_suffix(".m4a")
             try:
-                duration = convert_mp3_to_aac(mp3_path, aac_path, ffmpeg_path, ffprobe_path, bitrate, sample_rate)
+                duration = convert_mp3_to_aac(
+                    mp3_path, aac_path, ffmpeg_path, ffprobe_path, bitrate, sample_rate,
+                    source_duration_s=source_dur,
+                    progress=conv_progress,
+                    progress_task_id=inner_task,
+                )
                 talk.duration_seconds = duration
                 aac_paths.append(aac_path)
                 successful_talks.append(talk)
@@ -561,7 +696,8 @@ def build_m4b(
                 logger.error("AAC conversion failed for %r: %s — skipping", talk.title, exc)
                 skipped.append(talk.title)
             finally:
-                progress.advance(task)
+                conv_progress.update(inner_task, visible=False)
+                conv_progress.advance(outer_task)
 
     if not aac_paths:
         raise AudioError(
@@ -584,18 +720,24 @@ def build_m4b(
         # Step 4: Concatenate all AAC files
         logger.info("Concatenating %d AAC files...", len(aac_paths))
         _write_concat_list(aac_paths, concat_path)
-        _run(
-            [
-                str(ffmpeg_path),
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_path),
-                "-c", "copy",
-                "-y",
-                str(intermediate_aac),
-            ],
-            label="AAC concatenation",
+        _spinner_progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
         )
+        with _spinner_progress:
+            _spinner_progress.add_task(f"Concatenating {len(aac_paths)} AAC files...")
+            _run(
+                [
+                    str(ffmpeg_path),
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_path),
+                    "-c", "copy",
+                    "-y",
+                    str(intermediate_aac),
+                ],
+                label="AAC concatenation",
+            )
 
         # Step 5: Mux to m4b with chapters and optional cover art
         logger.info("Muxing m4b: %s", output_path.name)
@@ -621,7 +763,13 @@ def build_m4b(
             mux_cmd += ["-map", "0:a", "-c:a", "copy"]
 
         mux_cmd += ["-y", str(output_path)]
-        _run(mux_cmd, label="m4b mux")
+        _spinner_progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+        )
+        with _spinner_progress:
+            _spinner_progress.add_task(f"Muxing m4b: {output_path.name}")
+            _run(mux_cmd, label="m4b mux")
 
     # Step 6: Delete individual AAC files (intermediate cleaned by TemporaryDirectory)
     for aac_path in aac_paths:

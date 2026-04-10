@@ -24,7 +24,7 @@ Inspired by [General-Conference-to-Audiobook](https://github.com/ChurchofJesusCh
 pip install gencon-audiobook
 ```
 
-Python 3.10 or newer is required. All other dependencies, including ffmpeg, are handled automatically.
+Python 3.10 or newer is required. All other dependencies, including ffmpeg, are handled automatically. ffmpeg 1.0+ is required for per-file progress display during conversion; any ffmpeg from a package manager or the `static-ffmpeg` fallback exceeds this.
 
 New to the terminal or Python? See the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide) for step-by-step instructions.
 
