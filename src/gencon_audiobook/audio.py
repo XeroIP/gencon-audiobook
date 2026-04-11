@@ -7,7 +7,6 @@ import logging
 import subprocess
 import tempfile
 import threading
-import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
