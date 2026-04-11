@@ -6,6 +6,7 @@ import io
 import logging
 import re
 import zipfile
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
@@ -102,6 +103,13 @@ h1, h2, h3 {
 .transcript p {
   margin: 0.5em 0;
   text-align: justify;
+}
+
+.transcript img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1em auto;
 }
 
 nav ol {
@@ -232,9 +240,10 @@ def _sanitize_transcript(
         if not tag.get_text(strip=True):
             tag.string = str(tag["data-value"])
 
-    # Strip data-* attributes (React/JS rendering artifacts) and random web IDs
-    # (e.g., id="p_fvoG6") — neither has meaning in an EPUB reading system.
-    # Preserve id attributes beginning with "note" (footnote anchors).
+    # Strip data-* attributes (React/JS rendering artifacts), random web IDs
+    # (e.g., id="p_fvoG6"), and web CSS class names that have no corresponding
+    # rules in the EPUB stylesheet. Preserve id attributes beginning with "note"
+    # (footnote anchors). <img> class attrs are already cleared above.
     for tag in soup.find_all(True):
         data_attrs = [attr for attr in tag.attrs if attr.startswith("data-")]
         for attr in data_attrs:
@@ -242,6 +251,8 @@ def _sanitize_transcript(
         tag_id = tag.get("id")
         if isinstance(tag_id, str) and not tag_id.startswith("note"):
             del tag["id"]
+        if "class" in tag.attrs:
+            del tag["class"]
 
     return _void_to_xhtml(str(soup))
 
@@ -501,7 +512,7 @@ def _content_opf(
     """
     uid = f"gencon-audiobook-{conference.year}-{conference.month:02d}"
     rights = escape(_COPYRIGHT.format(year=conference.year))
-    modified = f"{conference.year}-{conference.month:02d}-01T00:00:00Z"
+    modified = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     lines: list[str] = [
         '<?xml version="1.0" encoding="utf-8"?>',
