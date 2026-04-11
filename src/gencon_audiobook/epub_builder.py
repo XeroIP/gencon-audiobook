@@ -623,6 +623,9 @@ def _content_opf(
     lines += [
         '  </manifest>',
         '  <spine>',
+        # nav.xhtml must be in the spine for landmarks href="#toc" to satisfy RSC-011.
+        # linear="no" keeps it out of the normal reading flow.
+        '    <itemref idref="nav" linear="no"/>',
         '    <itemref idref="page-cover"/>',
         '    <itemref idref="page-copyright"/>',
     ]

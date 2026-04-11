@@ -968,3 +968,18 @@ def test_build_epub_spine_includes_session_pages(tmp_path: Path) -> None:
     assert "session-001" in opf, (
         "content.opf spine must include session-001 divider page"
     )
+
+
+def test_build_epub_spine_includes_nav_linear_no(tmp_path: Path) -> None:
+    """nav.xhtml must appear in the spine with linear='no' to satisfy epubcheck RSC-011.
+
+    The landmarks nav links to nav.xhtml via href='#toc'. epubcheck RSC-011 requires
+    that any linked resource is a spine item. linear='no' keeps it out of normal reading flow.
+    """
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    opf = _epub_read(output, "content.opf").decode()
+    assert 'idref="nav"' in opf, "nav must be referenced in the spine"
+    assert 'linear="no"' in opf, "nav spine entry must have linear='no'"
