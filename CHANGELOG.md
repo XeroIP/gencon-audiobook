@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-04-11
+
+### Added
+- Portrait cover image: landscape source image is centered on a 1200x1800 gray canvas,
+  producing a proper 2:3 portrait cover for reader library grids.
+- Session divider pages in the EPUB — each session gets a dedicated XHTML page so TOC
+  session headers link to a unique destination rather than the first talk in the session.
+- EPUB landmarks navigation (`<nav epub:type="landmarks">`) with cover, TOC, and
+  bodymatter entries, improving compatibility with Kindle and accessibility tools.
+- `epub:type` attributes on content documents: `"cover"` on cover.xhtml,
+  `"chapter"` on all talk pages.
+- Speaker photos now fetched at 800px resolution via IIIF URL upgrade (same technique
+  already used for the conference cover), improving sharpness in the EPUB.
+- Post-write ZIP integrity check: `testzip()` runs after the EPUB is written and raises
+  `EpubError` if any entry is corrupt or the file is not a valid ZIP.
+- `.transcript img` CSS rule added to constrain inline image sizing in reader apps.
+- Release notes now include the CHANGELOG section for the tagged version, prepended
+  above the auto-generated PR list in GitHub releases.
+
+### Fixed
+- JPEG images (cover, speaker photos, inline images) are now stored uncompressed
+  (`ZIP_STORED`) in the EPUB ZIP, avoiding double-compression and compatibility
+  issues on older e-ink readers.
+- Footnote markers (`<sup data-value="1"></sup>`) now render visibly — the numeric
+  value is materialized as text content before the `data-*` stripping pass removes
+  the attribute.
+- Web CSS class names stripped from EPUB transcript HTML — classes like
+  `imageWrapper-wTPPD` and `body-block` reference React CSS with no EPUB rules.
+- `dcterms:modified` in `content.opf` now reflects the actual build timestamp
+  instead of a static conference date.
+
 ## [0.1.4] - 2026-04-11
 
 ### Added
@@ -132,7 +163,10 @@ Initial release.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and
   utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/XeroIP/gencon-audiobook/releases/tag/v0.1.0
