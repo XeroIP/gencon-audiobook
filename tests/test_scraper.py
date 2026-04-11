@@ -215,6 +215,59 @@ def test_parse_talk_page_handles_missing_transcript_gracefully():
     assert data["transcript_html"] is None
 
 
+def test_parse_talk_page_extracts_inline_images_from_srcset():
+    """Inline images with srcset-only (no src) are extracted using the largest resolution."""
+    asset_id = "m4bm6mveb5rxslfl"
+    srcset = (
+        f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%21100%2C/0/default 100w, "
+        f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%21500%2C/0/default 500w, "
+        f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%2160%2C/0/default 60w"
+    )
+    html = f"""
+    <html><body>
+      <div class="body-block">
+        <p>Talk text.</p>
+        <div><div class="imageWrapper-wTPPD">
+          <img data-assetid="{asset_id}" srcset="{srcset}" alt="Pioneers"/>
+        </div></div>
+      </div>
+    </body></html>
+    """
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+    images = data["inline_images"]
+    assert len(images) == 1, f"Expected 1 inline image, got {len(images)}"
+    assert images[0].asset_id == asset_id
+    assert images[0].alt == "Pioneers"
+    assert "500" in images[0].url, "Should pick the largest (500w) URL from srcset"
+
+
+def test_parse_talk_page_inline_images_empty_when_no_images():
+    """Talks with no inline images return an empty list."""
+    html = """
+    <html><body>
+      <div class="body-block"><p>No images here.</p></div>
+    </body></html>
+    """
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+    assert data["inline_images"] == [], "Should return empty list when no inline images"
+
+
+def test_parse_talk_page_deduplicates_inline_images():
+    """The same asset_id appearing twice in the body produces only one InlineImage."""
+    asset_id = "dupasset"
+    srcset = f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%21100%2C/0/default 100w"
+    html = f"""
+    <html><body>
+      <div class="body-block">
+        <img data-assetid="{asset_id}" srcset="{srcset}" alt="First"/>
+        <img data-assetid="{asset_id}" srcset="{srcset}" alt="Second"/>
+      </div>
+    </body></html>
+    """
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+    assert len(data["inline_images"]) == 1, "Duplicate asset_id should be deduplicated"
+
+
 # ---------------------------------------------------------------------------
 # robots.txt (#23)
 # ---------------------------------------------------------------------------

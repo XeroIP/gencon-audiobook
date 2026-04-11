@@ -24,7 +24,7 @@ from rich.progress import (
     TextColumn,
 )
 
-from .models import Conference, Session, Talk
+from .models import Conference, InlineImage, Session, Talk
 from .progress import TimeRemainingWithLabel
 from .utils import USER_AGENT, validate_url
 
@@ -696,23 +696,25 @@ def _sessions_from_html(html: str) -> list[Session]:
 # ---------------------------------------------------------------------------
 
 
-def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
-    """Extract mp3_url, transcript_html, and speaker_image_url from a talk page.
+def parse_talk_page(html: str, talk_url: str) -> dict:
+    """Extract mp3_url, transcript_html, speaker_image_url, speaker, and inline_images from a talk page.
 
     Args:
         html: HTML content of the individual talk page.
         talk_url: URL of this talk page (used only for logging).
 
     Returns:
-        Dict with keys: mp3_url, transcript_html, speaker_image_url, speaker.
-        Any value may be None if not found.
+        Dict with keys: mp3_url, transcript_html, speaker_image_url, speaker,
+        inline_images. String values may be None if not found; inline_images
+        is always a list (possibly empty).
     """
     soup = BeautifulSoup(html, "html.parser")
-    result: dict[str, str | None] = {
+    result: dict = {
         "mp3_url": None,
         "transcript_html": None,
         "speaker_image_url": None,
         "speaker": None,
+        "inline_images": [],
     }
 
     # MP3 URL — primary: reader.contentStore[*].meta.audio[0].mediaUrl in __INITIAL_STATE__
@@ -767,6 +769,55 @@ def parse_talk_page(html: str, talk_url: str) -> dict[str, str | None]:
             article = soup.find("article")
             if article:
                 result["transcript_html"] = str(article)
+
+    # Inline images — extract from transcript body before speaker search.
+    # Images use srcset-only (no src) in the Church site's responsive markup,
+    # so we parse srcset to find the canonical URL. Skip the speaker photo
+    # (found later) by only considering images inside div.body-block.
+    if body and isinstance(body, Tag):
+        seen_asset_ids: set[str] = set()
+        for img in body.find_all("img"):
+            if not isinstance(img, Tag):
+                continue
+            asset_id: str = str(img.get("data-assetid") or img.get("data-img-id") or "")
+            # Derive from URL path if data attributes are missing
+            src_raw = str(img.get("src") or "")
+            srcset_raw = str(img.get("srcset") or "")
+            # Pick best URL: prefer a direct src, otherwise parse srcset
+            best_url: str | None = None
+            if src_raw and validate_url(src_raw) and "/imgs/" in src_raw:
+                best_url = src_raw
+            elif srcset_raw:
+                # srcset format: "url1 60w, url2 100w, ..." — pick largest width
+                candidates: list[tuple[int, str]] = []
+                for part in srcset_raw.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    pieces = part.split()
+                    if len(pieces) >= 2:
+                        cand_url = pieces[0]
+                        width_str = pieces[1].rstrip("w")
+                        try:
+                            width = int(width_str)
+                        except ValueError:
+                            width = 0
+                        if validate_url(cand_url) and "/imgs/" in cand_url:
+                            candidates.append((width, cand_url))
+                if candidates:
+                    best_url = max(candidates, key=lambda t: t[0])[1]
+            if not best_url:
+                continue
+            if not asset_id:
+                # Derive from the URL's path segment after /imgs/
+                path_parts = best_url.split("/imgs/")
+                asset_id = path_parts[1].split("/")[0] if len(path_parts) > 1 else ""
+            if not asset_id or asset_id in seen_asset_ids:
+                continue
+            seen_asset_ids.add(asset_id)
+            alt = str(img.get("alt") or "")
+            result["inline_images"].append(InlineImage(url=best_url, alt=alt, asset_id=asset_id))
+            logger.debug("Found inline image: asset_id=%s url=%s", asset_id, best_url)
 
     # Speaker name — primary: p.author-name
     author_el = soup.find("p", class_="author-name")
@@ -906,6 +957,7 @@ def scrape_conference(conference_url: str) -> Conference:
                 talk.mp3_url = data["mp3_url"]
                 talk.transcript_html = data["transcript_html"]
                 talk.speaker_image_url = data["speaker_image_url"]
+                talk.inline_images = data["inline_images"]
 
                 # Validate required fields
                 missing = []

@@ -22,8 +22,9 @@ _COPYRIGHT = (
     "All rights reserved. For personal, noncommercial use only."
 )
 
-_MAX_PHOTO_WIDTH = 300  # px — per epub-style.md
-_JPEG_QUALITY = 85      # JPEG quality for all embedded images
+_MAX_PHOTO_WIDTH = 300   # px — speaker photos (per epub-style.md)
+_MAX_INLINE_WIDTH = 600  # px — inline body images (larger, they're content not thumbnails)
+_JPEG_QUALITY = 85       # JPEG quality for all embedded images
 
 # Void elements that must be self-closed in XHTML
 _VOID_RE = re.compile(
@@ -141,7 +142,10 @@ def _void_to_xhtml(html: str) -> str:
     return _VOID_RE.sub(_close, html)
 
 
-def _sanitize_transcript(raw_html: str | None) -> str:
+def _sanitize_transcript(
+    raw_html: str | None,
+    inline_image_map: dict[str, str] | None = None,
+) -> str:
     """Strip unsafe elements and external URLs from transcript HTML for EPUB embedding.
 
     Removes: <script>, <style>, <iframe>. External href/src attributes are removed
@@ -149,11 +153,16 @@ def _sanitize_transcript(raw_html: str | None) -> str:
     wrappers are unwrapped (display text and child elements are preserved inline)
     because scripture/footnote links point to the Church website and cannot
     resolve inside the EPUB container. data-* attributes and random web IDs are
-    stripped to reduce file size. Void elements are converted to XHTML
-    self-closing form.
+    stripped to reduce file size. Inline images whose original URL is in
+    inline_image_map have their src rewritten to the local EPUB path; remaining
+    img attributes (srcset, sizes, loading, class) are stripped to just src and
+    alt. Void elements are converted to XHTML self-closing form.
 
     Args:
         raw_html: Raw HTML fragment from a scraped talk page, or None.
+        inline_image_map: Optional mapping of original image URL -> EPUB-relative
+            path (e.g., "../images/inline-001-assetid.jpg"). Images whose URL
+            matches a key are kept with the local src; others are removed.
 
     Returns:
         Sanitized XHTML fragment string, or empty string if input is None/empty.
@@ -165,6 +174,38 @@ def _sanitize_transcript(raw_html: str | None) -> str:
 
     for tag in soup.find_all(["script", "style", "iframe"]):
         tag.decompose()
+
+    # Rewrite inline image src before external-URL stripping removes them.
+    # Strip all img attributes except src (rewritten) and alt.
+    if inline_image_map:
+        for img in soup.find_all("img"):
+            # Resolve src/srcset to find a matching key in inline_image_map
+            original_src = str(img.get("src") or "")
+            srcset_raw = str(img.get("srcset") or "")
+            local_path: str | None = inline_image_map.get(original_src)
+            if not local_path and srcset_raw:
+                for part in srcset_raw.split(","):
+                    cand = part.strip().split()[0] if part.strip() else ""
+                    if cand in inline_image_map:
+                        local_path = inline_image_map[cand]
+                        break
+            alt = str(img.get("alt") or "")
+            # Replace all attributes with just src+alt (or remove if not mapped)
+            img.attrs.clear()
+            if local_path:
+                img["src"] = local_path
+                img["alt"] = alt
+            # If no local_path, img has no src — will be removed by the external-URL
+            # stripping pass below (or left as empty <img/> which is harmless)
+    else:
+        # No map: just strip web-only img attributes, keep src/alt
+        for img in soup.find_all("img"):
+            src = str(img.get("src") or "")
+            alt = str(img.get("alt") or "")
+            img.attrs.clear()
+            if src:
+                img["src"] = src
+            img["alt"] = alt
 
     for tag in soup.find_all(True):
         for attr in ("href", "src", "action", "formaction", "data"):
@@ -198,11 +239,12 @@ def _sanitize_transcript(raw_html: str | None) -> str:
     return _void_to_xhtml(str(soup))
 
 
-def _resize_photo(src_path: Path) -> bytes:
-    """Load a speaker photo and resize to at most _MAX_PHOTO_WIDTH pixels wide.
+def _resize_image(src_path: Path, max_width: int) -> bytes:
+    """Load an image and resize to at most max_width pixels wide.
 
     Args:
-        src_path: Path to the source JPEG.
+        src_path: Path to the source image (any Pillow-supported format).
+        max_width: Maximum output width in pixels.
 
     Returns:
         JPEG bytes of the (possibly resized) image.
@@ -211,15 +253,20 @@ def _resize_photo(src_path: Path) -> bytes:
         # PIL stubs type resize()/convert() as Image.Image, not ImageFile.
         # Use a typed local variable to avoid mypy's ImageFile/Image mismatch.
         img: Image.Image = raw
-        if img.width > _MAX_PHOTO_WIDTH:
-            ratio = _MAX_PHOTO_WIDTH / img.width
-            new_size = (_MAX_PHOTO_WIDTH, int(img.height * ratio))
+        if img.width > max_width:
+            ratio = max_width / img.width
+            new_size = (max_width, int(img.height * ratio))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
         if img.mode != "RGB":
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return buf.getvalue()
+
+
+def _resize_photo(src_path: Path) -> bytes:
+    """Load a speaker photo and resize to at most _MAX_PHOTO_WIDTH pixels wide."""
+    return _resize_image(src_path, _MAX_PHOTO_WIDTH)
 
 
 def _xhtml_wrap(title: str, body: str, css_href: str) -> str:
@@ -301,6 +348,7 @@ def _talk_page(
     speaker: str,
     transcript_html: str | None,
     photo_href: str | None,
+    inline_image_map: dict[str, str] | None = None,
 ) -> str:
     """Generate a talk XHTML page with speaker photo, byline, title, and transcript.
 
@@ -309,6 +357,7 @@ def _talk_page(
         speaker: Speaker's name.
         transcript_html: Raw transcript HTML fragment, or None.
         photo_href: Relative path to speaker photo from this page's location, or None.
+        inline_image_map: Optional mapping of original image URL -> EPUB-relative path.
 
     Returns:
         Complete XHTML document string.
@@ -327,7 +376,7 @@ def _talk_page(
         f'<h1 class="talk-title">{escape(talk_title)}</h1>'
     )
 
-    sanitized = _sanitize_transcript(transcript_html)
+    sanitized = _sanitize_transcript(transcript_html, inline_image_map=inline_image_map)
     if sanitized:
         parts.append(f'<div class="transcript">\n{sanitized}\n</div>')
     else:
@@ -481,11 +530,13 @@ def build_epub(
       style.css
       text/cover.xhtml
       text/copyright.xhtml
-      text/talk-NNN-title.xhtml      (one per talk)
-      images/cover.jpg               (if present in images_dir)
-      images/spk-NNN-speaker.jpg     (one per talk that has a photo)
+      text/talk-NNN-title.xhtml          (one per talk)
+      images/cover.jpg                   (if present in images_dir)
+      images/spk-NNN-speaker.jpg         (one per talk that has a photo)
+      images/inline-NNN-assetid.jpg      (one per inline body image)
 
     Speaker photos are resized to at most 300 px wide before embedding.
+    Inline body images are resized to at most 600 px wide.
 
     Args:
         conference: Fully populated Conference. talk.transcript_html is used for body
@@ -520,6 +571,19 @@ def build_epub(
             photo_page_href = None
             photo_epub_href = None
 
+        # Build inline image map: original URL -> EPUB-relative path (from text/)
+        inline_image_map: dict[str, str] = {}
+        inline_image_files: list[tuple[str, Path, str]] = []  # (epub_href, src_path, manifest_id)
+        for img in talk.inline_images:
+            safe_id = sanitize_filename(img.asset_id)
+            src_path = images_dir / "inline" / f"{talk.talk_index:03d}-{safe_id}.jpg"
+            if src_path.exists():
+                epub_href = f"images/inline-{talk.talk_index:03d}-{safe_id}.jpg"
+                page_href = f"../images/inline-{talk.talk_index:03d}-{safe_id}.jpg"
+                manifest_id = f"img-inline-{talk.talk_index:03d}-{safe_id}"
+                inline_image_map[img.url] = page_href
+                inline_image_files.append((epub_href, src_path, manifest_id))
+
         talk_file_data.append({
             "talk": talk,
             "filename": filename,
@@ -527,14 +591,20 @@ def build_epub(
             "photo_src": photo_src if photo_src.exists() else None,
             "photo_page_href": photo_page_href,
             "photo_epub_href": photo_epub_href,
+            "inline_image_map": inline_image_map,
+            "inline_image_files": inline_image_files,
         })
 
     talk_items = [(d["item_id"], f"text/{d['filename']}") for d in talk_file_data]
-    image_items = [
+    image_items: list[tuple[str, str]] = [
         (f"img-{d['item_id']}", d["photo_epub_href"])
         for d in talk_file_data
         if d["photo_epub_href"]
     ]
+    # Add inline images to manifest
+    for d in talk_file_data:
+        for epub_href, _src, manifest_id in d["inline_image_files"]:
+            image_items.append((manifest_id, epub_href))
     # talk_hrefs: relative from nav.xhtml at EPUB root
     talk_hrefs: dict[int, str] = {
         d["talk"].talk_index: f"text/{d['filename']}" for d in talk_file_data
@@ -580,6 +650,7 @@ def build_epub(
                     talk.speaker,
                     talk.transcript_html,
                     d["photo_page_href"],
+                    inline_image_map=d["inline_image_map"] or None,
                 )
                 zf.writestr(f"text/{d['filename']}", page)
                 logger.debug("Added talk page: text/%s", d["filename"])
@@ -598,6 +669,19 @@ def build_epub(
                         logger.warning(
                             "Could not embed speaker photo for %r: %s — skipping",
                             d["talk"].speaker,
+                            exc,
+                        )
+
+            for d in talk_file_data:
+                for epub_href, src_path, _manifest_id in d["inline_image_files"]:
+                    try:
+                        img_bytes = _resize_image(src_path, _MAX_INLINE_WIDTH)
+                        zf.writestr(epub_href, img_bytes)
+                        logger.debug("Added inline image: %s", epub_href)
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not embed inline image %s: %s — skipping",
+                            src_path.name,
                             exc,
                         )
 

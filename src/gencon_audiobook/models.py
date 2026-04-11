@@ -6,6 +6,21 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class InlineImage:
+    """An image embedded within a talk transcript body.
+
+    Args:
+        url: Absolute URL of the image on churchofjesuschrist.org.
+        alt: Alt text from the <img> element.
+        asset_id: Unique asset identifier (from data-assetId or derived from URL).
+    """
+
+    url: str
+    alt: str
+    asset_id: str
+
+
+@dataclass
 class Talk:
     """A single General Conference talk.
 
@@ -29,6 +44,7 @@ class Talk:
     mp3_url: str | None = None
     transcript_html: str | None = None
     speaker_image_url: str | None = None
+    inline_images: list[InlineImage] = field(default_factory=list)
     session_name: str = ""
     session_number: int = 0   # 1-indexed
     talk_number: int = 0      # 1-indexed within the session
