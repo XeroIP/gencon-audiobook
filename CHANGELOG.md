@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-11
+
+### Added
+- Rich progress bars and spinners across all pipeline phases: conference fetch,
+  talk scraping (M/N bar with talk title), AAC conversion, download, m4b
+  verification, and EPUB build.
+- Countdown timer moved to immediately after the percentage on all progress bars,
+  with "remaining" label (e.g. `02:15 remaining`).
+- Conference name shown at the top of the completion report.
+
 ## [0.1.2] - 2026-04-09
 
 ### Added
