@@ -78,6 +78,17 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Extract CHANGELOG section
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          body=$(awk "/^## \[$version\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)
+          # Strip leading/trailing blank lines
+          body=$(echo "$body" | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+          printf 'body<<EOF\n%s\nEOF\n' "$body" >> "$GITHUB_OUTPUT"
+
       - name: Download build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -89,3 +100,4 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}
