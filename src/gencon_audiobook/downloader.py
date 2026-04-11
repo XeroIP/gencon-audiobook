@@ -224,6 +224,12 @@ def _speaker_path(output_dir: Path, talk: Talk) -> Path:
     return output_dir / "speakers" / f"{talk.talk_index:03d}-{name}.jpg"
 
 
+def _inline_image_path(output_dir: Path, talk: Talk, asset_id: str) -> Path:
+    """Return the destination path for an inline body image."""
+    safe_id = sanitize_filename(asset_id)
+    return output_dir / "inline" / f"{talk.talk_index:03d}-{safe_id}.jpg"
+
+
 def download_conference(
     conference: Conference,
     output_dir: Path,
@@ -271,6 +277,11 @@ def download_conference(
         if talk.speaker_image_url:
             dest = _speaker_path(output_dir, talk)
             queue.append((talk.speaker_image_url, dest, f"[photo] {talk.speaker[:40]}", True, None))
+
+    for talk in talks:
+        for img in talk.inline_images:
+            dest = _inline_image_path(output_dir, talk, img.asset_id)
+            queue.append((img.url, dest, f"[image] {img.asset_id[:40]}", True, None))
 
     if not queue:
         logger.info("Nothing to download.")

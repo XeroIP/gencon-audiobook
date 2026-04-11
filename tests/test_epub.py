@@ -362,6 +362,86 @@ def test_build_epub_missing_speaker_photo_skipped_gracefully(tmp_path: Path) -> 
         "No speaker images should be embedded when none were downloaded"
 
 
+def test_build_epub_embeds_inline_images(tmp_path: Path) -> None:
+    """Inline images with downloaded files are embedded and src rewritten."""
+    from gencon_audiobook.models import InlineImage
+    from gencon_audiobook.utils import sanitize_filename
+
+    asset_id = "abc123xyz"
+    original_url = f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%21500%2C/0/default"
+
+    talk = Talk(
+        title="Talk With Image",
+        speaker="Speaker One",
+        talk_url="https://www.churchofjesuschrist.org/t1",
+        talk_index=1,
+        transcript_html=f'<p>Text.</p><img src="{original_url}" alt="A photo"/>',
+        inline_images=[InlineImage(url=original_url, alt="A photo", asset_id=asset_id)],
+    )
+    session = Session(name="Morning Session", number=1, talks=[talk])
+    conference = Conference(
+        title="Test Conference",
+        year=2024,
+        month=4,
+        cover_image_url=None,
+        sessions=[session],
+        conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
+    )
+
+    # Write a fake inline image to the expected download location
+    safe_id = sanitize_filename(asset_id)
+    inline_dir = tmp_path / "inline"
+    inline_dir.mkdir()
+    _make_jpeg(inline_dir / f"001-{safe_id}.jpg")
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    names = _epub_names(output)
+    inline_images = [n for n in names if n.startswith("images/inline-")]
+    assert len(inline_images) == 1, \
+        f"Expected 1 inline image in EPUB, got {len(inline_images)}: {inline_images}"
+
+    # Verify src rewritten in the talk XHTML
+    filename = f"talk-001-{sanitize_filename(talk.title)}.xhtml"
+    page = _epub_read(output, f"text/{filename}").decode("utf-8")
+    assert original_url not in page, "Original external URL must not appear in talk XHTML"
+    assert "inline-001-" in page, "Rewritten local inline image path must appear in talk XHTML"
+
+
+def test_build_epub_missing_inline_image_skipped_gracefully(tmp_path: Path) -> None:
+    """If the inline image file was not downloaded, EPUB still builds without it."""
+    from gencon_audiobook.models import InlineImage
+
+    asset_id = "missingasset"
+    original_url = f"https://www.churchofjesuschrist.org/imgs/{asset_id}/full/%21500%2C/0/default"
+
+    talk = Talk(
+        title="Talk Missing Image",
+        speaker="Speaker One",
+        talk_url="https://www.churchofjesuschrist.org/t1",
+        talk_index=1,
+        transcript_html=f'<img src="{original_url}" alt="missing"/>',
+        inline_images=[InlineImage(url=original_url, alt="missing", asset_id=asset_id)],
+    )
+    session = Session(name="Morning Session", number=1, talks=[talk])
+    conference = Conference(
+        title="Test Conference",
+        year=2024,
+        month=4,
+        cover_image_url=None,
+        sessions=[session],
+        conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
+    )
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)  # file not on disk, should not raise
+    assert output.exists(), "EPUB should still build when inline image file is missing"
+    names = _epub_names(output)
+    assert not any(n.startswith("images/inline-") for n in names), \
+        "No inline images should be embedded when files are not on disk"
+
+
 # ---------------------------------------------------------------------------
 # build_epub — content validation
 # ---------------------------------------------------------------------------
