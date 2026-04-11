@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-11
+
+### Added
+- Inline talk body images are now downloaded and embedded in the EPUB. Images
+  are extracted from talk pages (srcset parsed for largest resolution), stored
+  in `output_dir/inline/`, resized to max 600px wide, and written into the EPUB
+  ZIP with full OPF manifest entries.
+- Per-talk ffmpeg progress bar with real-time encoding progress during AAC
+  conversion; inner bar tracks each file, outer bar tracks total talks.
+
+### Fixed
+- EPUB filenames now use hyphens instead of spaces (e.g. `April-2024-General-Conference.xhtml`),
+  resolving ~770 PKG-010/RSC-020 epubcheck errors caused by spaces in IRI path segments.
+- All `<a>` link wrappers in EPUB transcripts are unwrapped (display text preserved),
+  resolving ~900 RSC-033/RSC-026/RSC-007 epubcheck errors from unresolvable external links.
+- `data-*` attributes and random web IDs stripped from EPUB transcript HTML, reducing
+  XHTML file sizes by ~15-20% and removing React/JS rendering artifacts.
+- Nav session headers changed from `<span>` to `<a>` linking to the first talk in the
+  session, improving Kindle and reader app compatibility.
+- Conference cover image resolution upgraded by rewriting IIIF URLs to request 800px
+  wide images instead of the 250px thumbnail used on the website.
+
 ## [0.1.3] - 2026-04-11
 
 ### Added
