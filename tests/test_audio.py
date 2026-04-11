@@ -15,7 +15,7 @@ import pytest
 from PIL import Image
 
 from conftest import FFMPEG as _FFMPEG, FFPROBE as _FFPROBE, make_silent_mp3, requires_ffmpeg
-from gencon_audiobook.audio import AudioError, BuildStats, _ascii_safe, _probe_source_quality, build_m4b, convert_mp3_to_aac
+from gencon_audiobook.audio import AudioError, BuildStats, _ascii_safe, _probe_source_quality, _run_ffmpeg_with_progress, build_m4b, convert_mp3_to_aac
 from gencon_audiobook.models import Conference, Session, Talk
 
 
@@ -509,3 +509,107 @@ def test_build_m4b_auto_detects_source_quality(tmp_path: Path) -> None:
     assert stats.source_bitrate, "source_bitrate should be populated"
     assert stats.output_bitrate, "output_bitrate should be populated"
     assert stats.source_sample_rate > 0, "source_sample_rate should be positive"
+
+
+# ---------------------------------------------------------------------------
+# _run_ffmpeg_with_progress
+# ---------------------------------------------------------------------------
+
+
+def test_run_ffmpeg_with_progress_parses_out_time() -> None:
+    """out_time_us lines should be converted to seconds and forwarded to the progress task."""
+    from unittest.mock import MagicMock, patch
+    from rich.progress import Progress, TaskID
+
+    progress = MagicMock(spec=Progress)
+    task_id: TaskID = 0  # type: ignore[assignment]
+
+    # Simulate ffmpeg stdout: one progress update then end
+    stdout_lines = [
+        "out_time_us=2500000\n",
+        "progress=continue\n",
+        "out_time_us=5000000\n",
+        "progress=end\n",
+    ]
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(stdout_lines)
+    mock_proc.stderr = MagicMock()
+    mock_proc.stderr.read.return_value = ""
+    mock_proc.returncode = 0
+    mock_proc.poll.return_value = 0
+
+    with patch("subprocess.Popen", return_value=mock_proc):
+        _run_ffmpeg_with_progress(
+            ["ffmpeg", "-progress", "pipe:1", "-i", "in.mp3", "out.m4a"],
+            label="test",
+            source_duration_s=6.0,
+            progress=progress,
+            task_id=task_id,
+        )
+
+    calls = progress.update.call_args_list
+    completed_values = [c.kwargs["completed"] for c in calls if "completed" in c.kwargs]
+    assert any(abs(v - 2.5) < 0.01 for v in completed_values), (
+        f"Expected completed≈2.5 among {completed_values}"
+    )
+    assert any(abs(v - 5.0) < 0.01 for v in completed_values), (
+        f"Expected completed≈5.0 among {completed_values}"
+    )
+
+
+def test_run_ffmpeg_with_progress_nonzero_exit() -> None:
+    """Non-zero ffmpeg exit should raise AudioError with stderr content."""
+    from unittest.mock import MagicMock, patch
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(["progress=end\n"])
+    mock_proc.stderr = MagicMock()
+    mock_proc.stderr.read.return_value = "some ffmpeg error"
+    mock_proc.returncode = 1
+    mock_proc.poll.return_value = 1
+
+    progress = MagicMock()
+    with patch("subprocess.Popen", return_value=mock_proc):
+        with pytest.raises(AudioError, match="some ffmpeg error"):
+            _run_ffmpeg_with_progress(
+                ["ffmpeg", "-i", "in.mp3", "out.m4a"],
+                label="test",
+                source_duration_s=5.0,
+                progress=progress,
+                task_id=0,  # type: ignore[arg-type]
+            )
+
+
+def test_run_ffmpeg_with_progress_watchdog_kills_hung_process() -> None:
+    """A hung ffmpeg process should be killed by the watchdog timer and raise AudioError."""
+    from unittest.mock import MagicMock, patch
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter([])  # EOF immediately so the readline loop exits
+    mock_proc.stderr = MagicMock()
+    mock_proc.stderr.read.return_value = ""
+    mock_proc.returncode = -9
+    mock_proc.poll.return_value = None  # process appears still running when watchdog fires
+
+    # Replace threading.Timer with one that fires its callback synchronously on start().
+    # This simulates the timeout without waiting real time.
+    class _ImmediateTimer:
+        def __init__(self, _timeout: float, fn: object, *args: object, **kwargs: object) -> None:
+            self._fn = fn
+        def start(self) -> None:
+            self._fn()  # type: ignore[operator]
+        def cancel(self) -> None:
+            pass
+
+    progress = MagicMock()
+    with patch("subprocess.Popen", return_value=mock_proc), \
+         patch("gencon_audiobook.audio.threading.Timer", _ImmediateTimer):
+        with pytest.raises(AudioError, match="timed out"):
+            _run_ffmpeg_with_progress(
+                ["ffmpeg", "-i", "in.mp3", "out.m4a"],
+                label="test",
+                source_duration_s=10.0,
+                progress=progress,
+                task_id=0,  # type: ignore[arg-type]
+            )
