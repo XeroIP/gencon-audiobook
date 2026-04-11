@@ -12,9 +12,9 @@ from gencon_audiobook.utils import sanitize_filename, validate_url
 # ---------------------------------------------------------------------------
 
 
-def test_sanitize_filename_clean_input_unchanged():
+def test_sanitize_filename_replaces_spaces_with_hyphens():
     result = sanitize_filename("April 2024 General Conference")
-    assert result == "April 2024 General Conference", f"Expected unchanged, got {result!r}"
+    assert result == "April-2024-General-Conference", f"Expected hyphens, got {result!r}"
 
 
 def test_sanitize_filename_replaces_unsafe_chars():
@@ -85,8 +85,8 @@ def test_sanitize_filename_preserves_dots_dashes_underscores():
 
 
 def test_sanitize_filename_already_clean_name():
-    result = sanitize_filename("Talk Title Here")
-    assert result == "Talk Title Here", f"Expected unchanged, got {result!r}"
+    result = sanitize_filename("Talk-Title-Here")
+    assert result == "Talk-Title-Here", f"Expected unchanged, got {result!r}"
 
 
 # ---------------------------------------------------------------------------

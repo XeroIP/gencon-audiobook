@@ -248,7 +248,7 @@ def test_audio_path_format(tmp_path: Path) -> None:
         talk_index=3,
     )
     path = _audio_path(tmp_path, talk)
-    assert path.name == "003-Welcome to Conference.mp3", f"Unexpected name: {path.name!r}"
+    assert path.name == "003-Welcome-to-Conference.mp3", f"Unexpected name: {path.name!r}"
     assert path.parent == tmp_path / "audio"
 
 
@@ -260,7 +260,7 @@ def test_speaker_path_format(tmp_path: Path) -> None:
         talk_index=1,
     )
     path = _speaker_path(tmp_path, talk)
-    assert path.name == "001-Dallin H. Oaks.jpg", f"Unexpected name: {path.name!r}"
+    assert path.name == "001-Dallin-H.-Oaks.jpg", f"Unexpected name: {path.name!r}"
     assert path.parent == tmp_path / "speakers"
 
 
@@ -310,7 +310,7 @@ def test_download_conference_skip_audio_downloads_images(tmp_path: Path) -> None
 
     assert (tmp_path / "cover.jpg").exists(), \
         "cover.jpg must be downloaded even in epub-only (skip_audio=True) mode"
-    assert (tmp_path / "speakers" / "001-Test Speaker.jpg").exists(), \
+    assert (tmp_path / "speakers" / "001-Test-Speaker.jpg").exists(), \
         "speaker photos must be downloaded even in epub-only (skip_audio=True) mode"
 
     audio_files = list((tmp_path / "audio").glob("*.mp3")) if (tmp_path / "audio").exists() else []
@@ -332,7 +332,7 @@ def test_download_conference_audio_downloaded_by_default(tmp_path: Path) -> None
     conference = _make_single_talk_conference()
     download_conference(conference, tmp_path, delay=0, skip_audio=False)
 
-    mp3 = tmp_path / "audio" / "001-Test Talk.mp3"
+    mp3 = tmp_path / "audio" / "001-Test-Talk.mp3"
     assert mp3.exists(), \
         f"MP3 should be downloaded by default (skip_audio=False); expected {mp3}"
 
@@ -357,5 +357,5 @@ def test_download_conference_continues_on_failed_download(tmp_path: Path) -> Non
     # Must not raise even though cover download fails
     download_conference(conference, tmp_path, delay=0, skip_audio=False)
 
-    mp3 = tmp_path / "audio" / "001-Test Talk.mp3"
+    mp3 = tmp_path / "audio" / "001-Test-Talk.mp3"
     assert mp3.exists(), "MP3 should still be downloaded even when cover image fails"
