@@ -825,3 +825,57 @@ def test_talk_page_has_epub_type_chapter(tmp_path: Path) -> None:
     assert 'epub:type="chapter"' in talk_content, (
         f"Talk page body must have epub:type='chapter', got: {talk_content[:300]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# build_epub — cleanup (#96, #97, #98)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_transcript_strips_class_attributes() -> None:
+    """Web CSS class names must be stripped — they have no EPUB stylesheet rules."""
+    html = (
+        '<p class="body-block">Text</p>'
+        '<div class="imageWrapper-wTPPD"><ul class="bullet"><li>item</li></ul></div>'
+    )
+    result = _sanitize_transcript(html)
+    assert "class=" not in result, (
+        f"All class attributes must be stripped, got: {result!r}"
+    )
+    assert "Text" in result, "Paragraph text content must be preserved"
+    assert "item" in result, "List item content must be preserved"
+
+
+def test_build_epub_opf_modified_is_recent(tmp_path: Path) -> None:
+    """dcterms:modified in content.opf must reflect the actual build time."""
+    from datetime import datetime, timezone
+
+    # Capture window; strip microseconds since the OPF timestamp has second precision
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    after = datetime.now(timezone.utc).replace(microsecond=0)
+
+    opf = _epub_read(output, "content.opf").decode()
+    import re
+    match = re.search(r"<meta property=\"dcterms:modified\">([^<]+)</meta>", opf)
+    assert match, f"dcterms:modified not found in OPF: {opf[:500]!r}"
+    modified = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
+    assert before <= modified <= after, (
+        f"dcterms:modified {modified.isoformat()} must be between "
+        f"{before.isoformat()} and {after.isoformat()}"
+    )
+
+
+def test_build_epub_css_has_transcript_img_rule(tmp_path: Path) -> None:
+    """The EPUB stylesheet must have a .transcript img rule to constrain inline images."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    css = _epub_read(output, "style.css").decode()
+    assert ".transcript img" in css, (
+        "style.css must include a .transcript img rule for inline image sizing"
+    )
+    assert "max-width" in css, "The .transcript img rule must include max-width"
