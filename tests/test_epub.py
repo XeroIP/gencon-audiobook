@@ -163,6 +163,46 @@ def test_sanitize_transcript_strips_data_uri_src() -> None:
     )
 
 
+def test_sanitize_transcript_unwraps_scripture_ref_links() -> None:
+    """Scripture reference links must be unwrapped — text preserved, <a> removed."""
+    html = '<p><a class="scripture-ref" href="/study/scriptures/bofm/alma/5">Alma 5:12</a></p>'
+    result = _sanitize_transcript(html)
+    assert "<a" not in result, f"<a> tag must be removed, got: {result!r}"
+    assert "Alma 5:12" in result, "Link text must be preserved"
+
+
+def test_sanitize_transcript_unwraps_note_ref_links() -> None:
+    """Footnote note-ref links must be unwrapped — superscript preserved, <a> removed."""
+    html = '<p>See this.<a class="note-ref" href="#note1"><sup class="marker">1</sup></a></p>'
+    result = _sanitize_transcript(html)
+    assert "<a" not in result, f"<a> tag must be removed, got: {result!r}"
+    assert "<sup" in result, "Superscript must be preserved after unwrapping"
+
+
+def test_sanitize_transcript_strips_data_attributes() -> None:
+    """data-* attributes must be stripped — they are web rendering artifacts."""
+    html = '<p data-aid="abc123" data-type="verse">Content.</p>'
+    result = _sanitize_transcript(html)
+    assert "data-aid" not in result, f"data-aid must be stripped, got: {result!r}"
+    assert "data-type" not in result, f"data-type must be stripped, got: {result!r}"
+    assert "Content." in result, "Paragraph content must be preserved"
+
+
+def test_sanitize_transcript_strips_random_ids() -> None:
+    """Random web-generated id attributes must be stripped."""
+    html = '<p id="p_fvoG6">Text.</p>'
+    result = _sanitize_transcript(html)
+    assert 'id="p_fvoG6"' not in result, f"Random id must be stripped, got: {result!r}"
+    assert "Text." in result, "Paragraph content must be preserved"
+
+
+def test_sanitize_transcript_preserves_note_ids() -> None:
+    """id attributes starting with 'note' must be preserved for footnote anchors."""
+    html = '<p id="note1">Footnote text.</p>'
+    result = _sanitize_transcript(html)
+    assert 'id="note1"' in result, f"note id must be preserved, got: {result!r}"
+
+
 # ---------------------------------------------------------------------------
 # build_epub — basic structure
 # ---------------------------------------------------------------------------
