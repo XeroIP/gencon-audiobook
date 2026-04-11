@@ -37,10 +37,14 @@ _ALLOWED_HOSTNAMES = re.compile(
 def sanitize_filename(name: str) -> str:
     """Return a safe filename derived from name.
 
-    Replaces characters outside [a-zA-Z0-9 ._-] with underscores, collapses
-    consecutive underscores, strips leading/trailing underscores and spaces,
-    and truncates to 200 characters. Never returns a string that could be used
-    for path traversal.
+    Replaces spaces with hyphens, replaces characters outside [a-zA-Z0-9 ._-]
+    with underscores, collapses consecutive underscores, strips leading/trailing
+    underscores and spaces, and truncates to 200 characters. Never returns a
+    string that could be used for path traversal.
+
+    Spaces are replaced with hyphens (not underscores) so that filenames used
+    in EPUB IRI path segments are valid without percent-encoding (epubcheck
+    PKG-010).
 
     Args:
         name: Raw string to sanitize.
@@ -48,8 +52,11 @@ def sanitize_filename(name: str) -> str:
     Returns:
         A safe filename string. Returns "unnamed" if the result would be empty.
     """
+    # Replace spaces with hyphens before other transformations so EPUB IRI
+    # path segments contain no spaces (epubcheck PKG-010, RSC-020).
+    result = name.replace(" ", "-")
     # Replace unsafe characters with underscores
-    result = _SAFE_CHARS.sub("_", name)
+    result = _SAFE_CHARS.sub("_", result)
     # Collapse consecutive underscores
     result = _MULTI_UNDERSCORE.sub("_", result)
     # Strip leading/trailing underscores, spaces, and dots. Dots are included to prevent

@@ -30,7 +30,7 @@ def _make_conference(tmp_path: Path, n_talks: int = 3, duration: float = 2.0) ->
             talk_index=i,
         )
         talks.append(talk)
-        mp3 = tmp_path / "audio" / f"{i:03d}-Talk {i}.mp3"
+        mp3 = tmp_path / "audio" / f"{i:03d}-Talk-{i}.mp3"
         make_silent_mp3(mp3, duration_seconds=duration)
 
     session = Session(name="Morning Session", number=1, talks=talks)
@@ -225,7 +225,7 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
     output = tmp_path / "output.m4b"
 
     # Remove the second talk's MP3
-    mp3_to_remove = audio_dir / "002-Talk 2.mp3"
+    mp3_to_remove = audio_dir / "002-Talk-2.mp3"
     mp3_to_remove.unlink()
 
     build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
