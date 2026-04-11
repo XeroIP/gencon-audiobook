@@ -50,20 +50,22 @@ flowchart TD
     end
 
     subgraph EPUB["epub_builder.py"]
-        E1["Sanitize transcripts"]
-        E2["Resize speaker photos"]
-        E3["Assemble EPUB 3 ZIP"]
-        E1 --> E3
-        E2 --> E3
+        E1["Sanitize transcripts\n(strip classes, data-*, materialize\nfootnote markers, unwrap links)"]
+        E2["Resize speaker photos\n(800px IIIF source → 300px embed)"]
+        E3["Compose portrait cover\n(landscape source → 1200x1800 canvas)"]
+        E4["Assemble EPUB 3 ZIP\n(verify with testzip after write)"]
+        E1 --> E4
+        E2 --> E4
+        E3 --> E4
         subgraph ZIP["EPUB 3 ZIP contents"]
             direction LR
-            Z1["mimetype\n(uncompressed)"]
+            Z1["mimetype\n(ZIP_STORED)"]
             Z2["META-INF/\ncontainer.xml"]
-            Z3["content.opf\nnav.xhtml\nstyle.css"]
-            Z4["text/\ncover.xhtml\ncopyright.xhtml\ntalk-NNN-*.xhtml"]
-            Z5["images/\ncover.jpg\nspk-NNN-*.jpg"]
+            Z3["content.opf\nnav.xhtml (toc + landmarks)\nstyle.css"]
+            Z4["text/\ncover.xhtml\ncopyright.xhtml\nsession-NNN-*.xhtml\ntalk-NNN-*.xhtml"]
+            Z5["images/\ncover.jpg\nspk-NNN-*.jpg\n(all ZIP_STORED)"]
         end
-        E3 --> ZIP
+        E4 --> ZIP
     end
 
     AUDIO --> M4B["output.m4b"]
