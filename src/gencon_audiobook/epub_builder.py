@@ -409,6 +409,23 @@ def _copyright_page(conference_title: str, year: int) -> str:
     return _xhtml_wrap("Copyright", body, css_href="../style.css")
 
 
+def _session_page(session_name: str) -> str:
+    """Generate a lightweight session divider XHTML page.
+
+    Session dividers give TOC session headers a dedicated destination page,
+    avoiding duplicate TOC targets where both the session header and the first
+    talk entry would otherwise link to the same XHTML file.
+
+    Args:
+        session_name: Display name for the session (e.g., "Saturday Morning Session").
+
+    Returns:
+        Complete XHTML document string.
+    """
+    body = f'<h1>{escape(session_name)}</h1>'
+    return _xhtml_wrap(session_name, body, css_href="../style.css")
+
+
 def _talk_page(
     talk_title: str,
     speaker: str,
@@ -457,7 +474,11 @@ def _talk_page(
     )
 
 
-def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
+def _nav_xhtml(
+    conference: Conference,
+    talk_hrefs: dict[int, str],
+    session_hrefs: dict[int, str] | None = None,
+) -> str:
     """Generate the EPUB 3 navigation document with a nested session/talk TOC.
 
     nav.xhtml lives at the EPUB root, so talk hrefs use text/filename.xhtml.
@@ -465,6 +486,9 @@ def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
     Args:
         conference: Conference with sessions and talks populated.
         talk_hrefs: Mapping from talk_index to href relative to nav.xhtml.
+        session_hrefs: Optional mapping from session.number to href for session
+            divider pages. When provided, session headers link to their divider
+            page instead of the first talk, avoiding duplicate TOC targets.
 
     Returns:
         Complete nav.xhtml XHTML document string.
@@ -478,9 +502,11 @@ def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
     ]
     for session in conference.sessions:
         toc.append('    <li>')
-        # Link session headers to the first talk in that session so reading
-        # systems that require <a> (e.g., Kindle) don't drop the label.
-        if session.talks:
+        if session_hrefs and session.number in session_hrefs:
+            # Link to dedicated session divider page
+            toc.append(f'      <a href="{session_hrefs[session.number]}">{escape(session.name)}</a>')
+        elif session.talks:
+            # Fallback: link to first talk in session
             first_href = talk_hrefs[session.talks[0].talk_index]
             toc.append(f'      <a href="{first_href}">{escape(session.name)}</a>')
         else:
@@ -538,14 +564,18 @@ def _content_opf(
     talk_items: list[tuple[str, str]],
     image_items: list[tuple[str, str]],
     has_cover: bool,
+    spine_items: list[tuple[str, str]] | None = None,
 ) -> str:
     """Generate the OPF package document.
 
     Args:
         conference: Conference metadata for title, date, and rights fields.
-        talk_items: List of (manifest-id, href) for talk XHTML files, in spine order.
-        image_items: List of (manifest-id, href) for speaker photo images.
+        talk_items: List of (manifest-id, href) for all content XHTML files (manifest).
+        image_items: List of (manifest-id, href) for image files.
         has_cover: Whether cover.jpg is present.
+        spine_items: Optional ordered list of (manifest-id, href) for the spine. When
+            provided, this controls reading order (e.g., session dividers before talks).
+            When None, talk_items is used for the spine.
 
     Returns:
         OPF XML document as a string.
@@ -596,7 +626,7 @@ def _content_opf(
         '    <itemref idref="page-cover"/>',
         '    <itemref idref="page-copyright"/>',
     ]
-    for item_id, _ in talk_items:
+    for item_id, _ in (spine_items if spine_items is not None else talk_items):
         lines.append(f'    <itemref idref="{item_id}"/>')
     lines += ['  </spine>', '</package>']
     return "\n".join(lines) + "\n"
@@ -702,6 +732,43 @@ def build_epub(
         d["talk"].talk_index: f"text/{d['filename']}" for d in talk_file_data
     }
 
+    # Session divider pages: each session gets a lightweight page so TOC session
+    # headers can link to a unique destination rather than the first talk.
+    session_file_data: list[dict[str, str]] = []
+    session_hrefs: dict[int, str] = {}
+    for session in conference.sessions:
+        safe_name = sanitize_filename(session.name)
+        filename = f"session-{session.number:03d}-{safe_name}.xhtml"
+        item_id = f"session-{session.number:03d}"
+        href = f"text/{filename}"
+        session_file_data.append({
+            "session_name": session.name,
+            "filename": filename,
+            "item_id": item_id,
+        })
+        session_hrefs[session.number] = href
+
+    # Build interleaved spine: session divider page followed by its talks,
+    # for each session. This is the order content pages appear in the EPUB spine.
+    spine_items: list[tuple[str, str]] = []
+    talk_item_lookup: dict[int, tuple[str, str]] = {
+        d["talk"].talk_index: (d["item_id"], f"text/{d['filename']}") for d in talk_file_data
+    }
+    session_item_lookup: dict[int, tuple[str, str]] = {
+        session.number: (
+            f"session-{session.number:03d}",
+            f"text/session-{session.number:03d}-{sanitize_filename(session.name)}.xhtml",
+        )
+        for session in conference.sessions
+    }
+    for session in conference.sessions:
+        spine_items.append(session_item_lookup[session.number])
+        for talk in session.talks:
+            spine_items.append(talk_item_lookup[talk.talk_index])
+
+    # All XHTML content items for the manifest (order doesn't matter for manifest)
+    all_xhtml_items = list(session_item_lookup.values()) + talk_items
+
     logger.info("Building EPUB: %s (%d talks)", output_path.name, len(talks))
 
     try:
@@ -726,14 +793,24 @@ def build_epub(
             zf.writestr("style.css", _STYLESHEET)
             zf.writestr(
                 "content.opf",
-                _content_opf(conference, talk_items, image_items, has_cover),
+                _content_opf(
+                    conference,
+                    all_xhtml_items,
+                    image_items,
+                    has_cover,
+                    spine_items=spine_items,
+                ),
             )
-            zf.writestr("nav.xhtml", _nav_xhtml(conference, talk_hrefs))
+            zf.writestr("nav.xhtml", _nav_xhtml(conference, talk_hrefs, session_hrefs))
             zf.writestr("text/cover.xhtml", _cover_page(conference.title, has_cover))
             zf.writestr(
                 "text/copyright.xhtml",
                 _copyright_page(conference.title, conference.year),
             )
+
+            for d in session_file_data:
+                zf.writestr(f"text/{d['filename']}", _session_page(d["session_name"]))
+                logger.debug("Added session page: text/%s", d["filename"])
 
             for d in talk_file_data:
                 talk = d["talk"]

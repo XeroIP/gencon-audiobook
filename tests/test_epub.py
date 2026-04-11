@@ -926,3 +926,45 @@ def test_make_portrait_cover_uses_expected_dimensions(tmp_path: Path) -> None:
         assert img.height == _COVER_HEIGHT, (
             f"Cover height must be {_COVER_HEIGHT}, got {img.height}"
         )
+
+
+# ---------------------------------------------------------------------------
+# build_epub — session divider pages (#99)
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_has_session_divider_pages(tmp_path: Path) -> None:
+    """Each session must have a dedicated divider page in the EPUB."""
+    conference = _make_conference(n_talks=4)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    names = _epub_names(output)
+    session_pages = [n for n in names if n.startswith("text/session-")]
+    assert len(session_pages) == len(conference.sessions), (
+        f"Expected {len(conference.sessions)} session pages, got {session_pages}"
+    )
+
+
+def test_nav_session_headers_link_to_divider_pages(tmp_path: Path) -> None:
+    """Session header links in nav.xhtml must point to session divider pages, not talks."""
+    conference = _make_conference(n_talks=4)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    nav = _epub_read(output, "nav.xhtml").decode()
+    assert "text/session-" in nav, (
+        "nav.xhtml session headers must link to session divider pages"
+    )
+
+
+def test_build_epub_spine_includes_session_pages(tmp_path: Path) -> None:
+    """The OPF spine must include session divider pages before their talks."""
+    conference = _make_conference(n_talks=4)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    opf = _epub_read(output, "content.opf").decode()
+    assert "session-001" in opf, (
+        "content.opf spine must include session-001 divider page"
+    )

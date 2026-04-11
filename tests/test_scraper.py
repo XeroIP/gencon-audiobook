@@ -442,3 +442,46 @@ def test_find_cover_image_leaves_non_iiif_url_unchanged() -> None:
     soup = BeautifulSoup(html, "html.parser")
     result = _find_cover_image(soup)
     assert result == "https://www.churchofjesuschrist.org/imgs/cover.jpg"
+
+
+# ---------------------------------------------------------------------------
+# _upgrade_iiif — module-level function (#100)
+# ---------------------------------------------------------------------------
+
+
+def test_upgrade_iiif_rewrites_percent_encoded_form() -> None:
+    """_upgrade_iiif must rewrite percent-encoded IIIF size to 800px."""
+    from gencon_audiobook.scraper import _upgrade_iiif
+
+    url = "https://www.churchofjesuschrist.org/imgs/abc/full/%21250%2C/0/default"
+    result = _upgrade_iiif(url)
+    assert "%21800%2C" in result, (
+        f"Expected %21800%2C in result, got: {result!r}"
+    )
+    assert "%21250%2C" not in result, (
+        f"Original size should be replaced, got: {result!r}"
+    )
+
+
+def test_upgrade_iiif_rewrites_plain_form() -> None:
+    """_upgrade_iiif must rewrite plain !N, IIIF size to 800px."""
+    from gencon_audiobook.scraper import _upgrade_iiif
+
+    url = "https://www.churchofjesuschrist.org/imgs/abc/full/!250,/0/default"
+    result = _upgrade_iiif(url)
+    assert "!800," in result, (
+        f"Expected !800, in result, got: {result!r}"
+    )
+    assert "!250," not in result, (
+        f"Original size should be replaced, got: {result!r}"
+    )
+
+
+def test_upgrade_iiif_leaves_non_iiif_url_unchanged() -> None:
+    """_upgrade_iiif must return non-IIIF URLs unchanged."""
+    from gencon_audiobook.scraper import _upgrade_iiif
+
+    url = "https://www.churchofjesuschrist.org/imgs/abc/photo.jpg"
+    assert _upgrade_iiif(url) == url, (
+        f"Non-IIIF URL must pass through unchanged, got: {_upgrade_iiif(url)!r}"
+    )
