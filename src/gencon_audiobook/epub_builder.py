@@ -145,8 +145,12 @@ def _sanitize_transcript(raw_html: str | None) -> str:
     """Strip unsafe elements and external URLs from transcript HTML for EPUB embedding.
 
     Removes: <script>, <style>, <iframe>. External href/src attributes are removed
-    to prevent broken external references in the EPUB container.
-    Void elements are converted to XHTML self-closing form.
+    to prevent broken external references in the EPUB container. All <a> link
+    wrappers are unwrapped (display text and child elements are preserved inline)
+    because scripture/footnote links point to the Church website and cannot
+    resolve inside the EPUB container. data-* attributes and random web IDs are
+    stripped to reduce file size. Void elements are converted to XHTML
+    self-closing form.
 
     Args:
         raw_html: Raw HTML fragment from a scraped talk page, or None.
@@ -173,6 +177,23 @@ def _sanitize_transcript(raw_html: str | None) -> str:
                 or val.startswith("data:")  # data: URIs can embed arbitrary active content
             ):
                 del tag.attrs[attr]
+
+    # Unwrap all <a> tags — scripture refs, footnote links, and cross-refs all
+    # point outside the EPUB container (RSC-033, RSC-026, RSC-007). Keeps display
+    # text and child elements (e.g., <sup> superscripts) inline.
+    for a_tag in soup.find_all("a"):
+        a_tag.unwrap()
+
+    # Strip data-* attributes (React/JS rendering artifacts) and random web IDs
+    # (e.g., id="p_fvoG6") — neither has meaning in an EPUB reading system.
+    # Preserve id attributes beginning with "note" (footnote anchors).
+    for tag in soup.find_all(True):
+        data_attrs = [attr for attr in tag.attrs if attr.startswith("data-")]
+        for attr in data_attrs:
+            del tag[attr]
+        tag_id = tag.get("id")
+        if isinstance(tag_id, str) and not tag_id.startswith("note"):
+            del tag["id"]
 
     return _void_to_xhtml(str(soup))
 
