@@ -358,7 +358,13 @@ def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
     ]
     for session in conference.sessions:
         toc.append('    <li>')
-        toc.append(f'      <span>{escape(session.name)}</span>')
+        # Link session headers to the first talk in that session so reading
+        # systems that require <a> (e.g., Kindle) don't drop the label.
+        if session.talks:
+            first_href = talk_hrefs[session.talks[0].talk_index]
+            toc.append(f'      <a href="{first_href}">{escape(session.name)}</a>')
+        else:
+            toc.append(f'      <span>{escape(session.name)}</span>')
         toc.append('      <ol>')
         for talk in session.talks:
             href = talk_hrefs[talk.talk_index]

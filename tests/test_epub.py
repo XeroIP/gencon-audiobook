@@ -295,6 +295,19 @@ def test_build_epub_sessions_in_nav(tmp_path: Path) -> None:
         )
 
 
+def test_build_epub_session_headers_are_links(tmp_path: Path) -> None:
+    """Session headers in nav.xhtml must use <a> not <span> for reader compatibility."""
+    conference = _make_conference(n_talks=2)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    nav = _epub_read(output, "nav.xhtml").decode("utf-8")
+    session_name = conference.sessions[0].name
+    assert f"<span>{session_name}</span>" not in nav, \
+        "Session header must not use <span>"
+    assert f">{session_name}</a>" in nav, \
+        "Session header must use <a> linking to first talk"
+
+
 # ---------------------------------------------------------------------------
 # build_epub — images
 # ---------------------------------------------------------------------------

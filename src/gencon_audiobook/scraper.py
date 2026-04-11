@@ -962,13 +962,24 @@ def _month_name(month: int) -> str:
 
 
 def _find_cover_image(soup: BeautifulSoup) -> str | None:
-    """Try to find a conference cover image URL from a parsed page."""
+    """Try to find a conference cover image URL from a parsed page.
+
+    Upgrades IIIF-style size parameters to 800px wide so the cover is
+    suitable for an ebook cover rather than a social-sharing thumbnail.
+    """
+    def _upgrade_iiif(url: str) -> str:
+        """Rewrite IIIF size segment to request 800px-wide image."""
+        # Handles both percent-encoded (%21...%2C) and plain (!N,) forms
+        url = re.sub(r"/full/%21\d+%2C/", "/full/%21800%2C/", url)
+        url = re.sub(r"/full/!\d+,/", "/full/!800,/", url)
+        return url
+
     # Primary: og:image meta tag
     og = soup.find("meta", property="og:image")
     if isinstance(og, Tag):
         content = og.get("content")
         if isinstance(content, str) and validate_url(content):
-            return content
+            return _upgrade_iiif(content)
 
     # Fallback: first /imgs/ image on the page
     for img in soup.find_all("img", src=True):
@@ -976,6 +987,6 @@ def _find_cover_image(soup: BeautifulSoup) -> str | None:
             continue
         src = img.get("src")
         if isinstance(src, str) and "/imgs/" in src and validate_url(src):
-            return src
+            return _upgrade_iiif(src)
 
     return None
