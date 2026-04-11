@@ -48,6 +48,26 @@ _CONFERENCE_URL_RE = re.compile(r"/study/general-conference/(\d{4})/(\d{2})(?:\?
 # Matches /study/general-conference/YYYYYYYY (decade-range index, e.g. 20202024)
 _DECADE_RANGE_RE = re.compile(r"/study/general-conference/(\d{4})(\d{4})$")
 
+
+def _upgrade_iiif(url: str) -> str:
+    """Rewrite IIIF size segment to request 800px-wide image.
+
+    The Church website serves images via an IIIF Image API endpoint. The
+    og:image and img src tags use small thumbnail sizes (e.g., 250px). This
+    function upgrades those to 800px for better quality in the EPUB output.
+    Both percent-encoded (%21...%2C) and plain (!N,) forms are handled.
+    Non-IIIF URLs pass through unchanged.
+
+    Args:
+        url: Original image URL.
+
+    Returns:
+        URL with IIIF size parameter upgraded to 800px, or original URL unchanged.
+    """
+    url = re.sub(r"/full/%21\d+%2C/", "/full/%21800%2C/", url)
+    url = re.sub(r"/full/!\d+,/", "/full/!800,/", url)
+    return url
+
 # Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL).
 # Modern talk slugs use a numeric-prefix + speaker-name format with no hyphens
 # (e.g., "11oaks", "12christofferson"). Session-level links DO contain hyphens
@@ -843,8 +863,8 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
             continue
         src = img.get("src")
         if isinstance(src, str) and "/imgs/" in src and validate_url(src):
-            result["speaker_image_url"] = src
-            logger.debug("speaker_image_url (primary /imgs/): %s", src)
+            result["speaker_image_url"] = _upgrade_iiif(src)
+            logger.debug("speaker_image_url (primary /imgs/): %s", result["speaker_image_url"])
             break
 
     if not result["speaker_image_url"]:
@@ -853,7 +873,7 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
         if isinstance(og, Tag):
             content = og.get("content")
             if isinstance(content, str) and validate_url(content):
-                result["speaker_image_url"] = content
+                result["speaker_image_url"] = _upgrade_iiif(content)
 
     return result
 
@@ -1019,13 +1039,6 @@ def _find_cover_image(soup: BeautifulSoup) -> str | None:
     Upgrades IIIF-style size parameters to 800px wide so the cover is
     suitable for an ebook cover rather than a social-sharing thumbnail.
     """
-    def _upgrade_iiif(url: str) -> str:
-        """Rewrite IIIF size segment to request 800px-wide image."""
-        # Handles both percent-encoded (%21...%2C) and plain (!N,) forms
-        url = re.sub(r"/full/%21\d+%2C/", "/full/%21800%2C/", url)
-        url = re.sub(r"/full/!\d+,/", "/full/!800,/", url)
-        return url
-
     # Primary: og:image meta tag
     og = soup.find("meta", property="og:image")
     if isinstance(og, Tag):
