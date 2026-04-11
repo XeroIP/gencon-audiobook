@@ -18,10 +18,10 @@ from rich.progress import (
     SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
 )
 
 from .models import Conference, Talk
+from .progress import TimeRemainingWithLabel
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -536,8 +536,8 @@ def build_m4b(
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
-        TimeRemainingColumn(),
     )
     with progress:
         task = progress.add_task("Converting to AAC", total=len(talks))

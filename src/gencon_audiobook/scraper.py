@@ -22,10 +22,10 @@ from rich.progress import (
     SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
 )
 
 from .models import Conference, Session, Talk
+from .progress import TimeRemainingWithLabel
 from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
@@ -887,8 +887,8 @@ def scrape_conference(conference_url: str) -> Conference:
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
-        TimeRemainingColumn(),
     )
     with scrape_progress:
         task = scrape_progress.add_task("Scraping talks", total=len(all_talks))
