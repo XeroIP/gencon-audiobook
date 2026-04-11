@@ -13,12 +13,13 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
 )
 
 from .models import Conference, Talk
+from .progress import TimeRemainingWithLabel
 from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
@@ -282,18 +283,20 @@ def download_conference(
     )
 
     overall_progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
-        TimeRemainingColumn(),
     )
     file_progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
-        TimeRemainingColumn(),
     )
 
     failed: list[str] = []

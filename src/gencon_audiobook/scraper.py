@@ -14,11 +14,22 @@ from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup, Tag
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
 from .models import Conference, Session, Talk
+from .progress import TimeRemainingWithLabel
 from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 _BASE_URL = "https://www.churchofjesuschrist.org"
 _ARCHIVE_PATH = "/study/general-conference"
@@ -870,42 +881,56 @@ def scrape_conference(conference_url: str) -> Conference:
     valid_count = 0
     skipped: list[Talk] = []
 
-    for i, talk in enumerate(all_talks, start=1):
-        logger.info("Scraping talk %d/%d: %s", i, len(all_talks), talk.title)
-        try:
-            talk_html = _fetch(http, talk.talk_url)
-            data = parse_talk_page(talk_html, talk.talk_url)
+    console.print(f"Scraping: {title}")
+    scrape_progress = Progress(
+        SpinnerColumn(),
+        MofNCompleteColumn(),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
+        TextColumn("[progress.description]{task.description}"),
+    )
+    with scrape_progress:
+        task = scrape_progress.add_task("Scraping talks", total=len(all_talks))
+        for i, talk in enumerate(all_talks, start=1):
+            scrape_progress.update(task, description=talk.title[:60])
+            logger.debug("Scraping talk %d/%d: %s", i, len(all_talks), talk.title)
+            try:
+                talk_html = _fetch(http, talk.talk_url)
+                data = parse_talk_page(talk_html, talk.talk_url)
 
-            # Use speaker from talk page if listing didn't provide one
-            if not talk.speaker and data["speaker"]:
-                talk.speaker = data["speaker"]
+                # Use speaker from talk page if listing didn't provide one
+                if not talk.speaker and data["speaker"]:
+                    talk.speaker = data["speaker"]
 
-            talk.mp3_url = data["mp3_url"]
-            talk.transcript_html = data["transcript_html"]
-            talk.speaker_image_url = data["speaker_image_url"]
+                talk.mp3_url = data["mp3_url"]
+                talk.transcript_html = data["transcript_html"]
+                talk.speaker_image_url = data["speaker_image_url"]
 
-            # Validate required fields
-            missing = []
-            if not talk.title:
-                missing.append("title")
-            if not talk.speaker:
-                missing.append("speaker")
-            if not talk.mp3_url or not validate_url(talk.mp3_url):
-                missing.append("mp3_url")
+                # Validate required fields
+                missing = []
+                if not talk.title:
+                    missing.append("title")
+                if not talk.speaker:
+                    missing.append("speaker")
+                if not talk.mp3_url or not validate_url(talk.mp3_url):
+                    missing.append("mp3_url")
 
-            if missing:
-                logger.error(
-                    "Talk at %s missing required fields: %s — skipping",
-                    talk.talk_url,
-                    ", ".join(missing),
-                )
+                if missing:
+                    logger.error(
+                        "Talk at %s missing required fields: %s — skipping",
+                        talk.talk_url,
+                        ", ".join(missing),
+                    )
+                    skipped.append(talk)
+                else:
+                    valid_count += 1
+
+            except ScraperError as exc:
+                logger.error("Failed to scrape talk %s: %s", talk.talk_url, exc)
                 skipped.append(talk)
-            else:
-                valid_count += 1
-
-        except ScraperError as exc:
-            logger.error("Failed to scrape talk %s: %s", talk.talk_url, exc)
-            skipped.append(talk)
+            finally:
+                scrape_progress.advance(task)
 
     if skipped:
         logger.warning("%d talk(s) skipped due to missing fields or errors", len(skipped))

@@ -15,12 +15,13 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
-    TimeRemainingColumn,
 )
 
 from .models import Conference, Talk
+from .progress import TimeRemainingWithLabel
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -531,11 +532,12 @@ def build_m4b(
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
     progress = Progress(
+        SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
-        TimeRemainingColumn(),
     )
     with progress:
         task = progress.add_task("Converting to AAC", total=len(talks))
@@ -630,7 +632,9 @@ def build_m4b(
             logger.warning("Could not delete %s: %s", aac_path, exc)
 
     # Step 7: Verify
-    _verify_m4b(output_path, conference, ffprobe_path)
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+        sp.add_task(f"Verifying m4b: {output_path.name}")
+        _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)
 
     return BuildStats(
