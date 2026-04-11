@@ -777,3 +777,51 @@ def test_sanitize_transcript_preserves_existing_text_over_data_value() -> None:
     assert ">X<" not in result, (
         f"data-value 'X' must not overwrite existing text content, got: {result!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# build_epub — EPUB semantics (#93, #94)
+# ---------------------------------------------------------------------------
+
+
+def test_nav_has_landmarks(tmp_path: Path) -> None:
+    """nav.xhtml must contain a landmarks nav with cover, toc, and bodymatter entries."""
+    conference = _make_conference(n_talks=2)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    nav = _epub_read(output, "nav.xhtml").decode()
+    assert 'epub:type="landmarks"' in nav, (
+        "nav.xhtml must have a landmarks nav section"
+    )
+    assert 'epub:type="cover"' in nav, "Landmarks must include a cover entry"
+    assert 'epub:type="toc"' in nav, "Landmarks must include a toc entry"
+    assert 'epub:type="bodymatter"' in nav, "Landmarks must include a bodymatter entry"
+
+
+def test_cover_page_has_epub_type_cover(tmp_path: Path) -> None:
+    """cover.xhtml body must have epub:type="cover"."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    cover = _epub_read(output, "text/cover.xhtml").decode()
+    assert 'epub:type="cover"' in cover, (
+        f"cover.xhtml body must have epub:type='cover', got: {cover[:300]!r}"
+    )
+
+
+def test_talk_page_has_epub_type_chapter(tmp_path: Path) -> None:
+    """Talk XHTML bodies must have epub:type="chapter"."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    with zipfile.ZipFile(output) as zf:
+        talk_files = [n for n in zf.namelist() if n.startswith("text/talk-")]
+        assert talk_files, "Expected at least one talk XHTML file"
+        talk_content = zf.read(talk_files[0]).decode()
+
+    assert 'epub:type="chapter"' in talk_content, (
+        f"Talk page body must have epub:type='chapter', got: {talk_content[:300]!r}"
+    )
