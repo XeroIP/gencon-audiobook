@@ -15,6 +15,7 @@ import responses as responses_lib
 from gencon_audiobook.scraper import (
     ScraperError,
     _check_robots,
+    _find_cover_image,
     _get_robots,
     _make_http_session as _scraper_make_session,
     _robots_cache,
@@ -337,3 +338,54 @@ def test_fetch_403_raises_immediately_without_retry() -> None:
     assert len(responses_lib.calls) == 1, (
         f"403 must not be retried — expected 1 request, got {len(responses_lib.calls)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _find_cover_image — IIIF URL upgrade
+# ---------------------------------------------------------------------------
+
+
+def test_find_cover_image_upgrades_iiif_percent_encoded_url() -> None:
+    """og:image URLs with percent-encoded IIIF size must be upgraded to 800px."""
+    from bs4 import BeautifulSoup
+    html = (
+        '<html><head>'
+        '<meta property="og:image" content="https://www.churchofjesuschrist.org'
+        '/imgs/abc123/full/%21250%2C/0/default"/>'
+        '</head></html>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    result = _find_cover_image(soup)
+    assert result is not None, "Should find cover image URL"
+    assert "%21800%2C" in result, f"IIIF size not upgraded to 800: {result!r}"
+    assert "%21250%2C" not in result, f"Original size still present: {result!r}"
+
+
+def test_find_cover_image_upgrades_iiif_plain_url() -> None:
+    """og:image URLs with plain IIIF size must also be upgraded."""
+    from bs4 import BeautifulSoup
+    html = (
+        '<html><head>'
+        '<meta property="og:image" content="https://www.churchofjesuschrist.org'
+        '/imgs/abc123/full/!500,/0/default"/>'
+        '</head></html>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    result = _find_cover_image(soup)
+    assert result is not None
+    assert "!800," in result, f"IIIF size not upgraded to 800: {result!r}"
+    assert "!500," not in result, f"Original size still present: {result!r}"
+
+
+def test_find_cover_image_leaves_non_iiif_url_unchanged() -> None:
+    """URLs that don't match the IIIF pattern are returned as-is."""
+    from bs4 import BeautifulSoup
+    html = (
+        '<html><head>'
+        '<meta property="og:image" content="https://www.churchofjesuschrist.org'
+        '/imgs/cover.jpg"/>'
+        '</head></html>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    result = _find_cover_image(soup)
+    assert result == "https://www.churchofjesuschrist.org/imgs/cover.jpg"
