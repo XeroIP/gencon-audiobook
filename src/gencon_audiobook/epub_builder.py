@@ -225,6 +225,13 @@ def _sanitize_transcript(
     for a_tag in soup.find_all("a"):
         a_tag.unwrap()
 
+    # Materialize data-value into text for elements that rely on CSS
+    # content: attr(data-value) for display (e.g., footnote markers on the
+    # Church site use <sup data-value="1"></sup> with no text content).
+    for tag in soup.find_all(attrs={"data-value": True}):
+        if not tag.get_text(strip=True):
+            tag.string = str(tag["data-value"])
+
     # Strip data-* attributes (React/JS rendering artifacts) and random web IDs
     # (e.g., id="p_fvoG6") — neither has meaning in an EPUB reading system.
     # Preserve id attributes beginning with "note" (footnote anchors).
@@ -656,14 +663,16 @@ def build_epub(
                 logger.debug("Added talk page: text/%s", d["filename"])
 
             if has_cover:
-                zf.write(cover_src, "images/cover.jpg")
+                # JPEGs are already compressed — store them to avoid double-compression
+                # and compatibility issues on older e-ink readers.
+                zf.write(cover_src, "images/cover.jpg", compress_type=zipfile.ZIP_STORED)
                 logger.debug("Added cover image")
 
             for d in talk_file_data:
                 if d["photo_src"] and d["photo_epub_href"]:
                     try:
                         photo_bytes = _resize_photo(d["photo_src"])
-                        zf.writestr(d["photo_epub_href"], photo_bytes)
+                        zf.writestr(d["photo_epub_href"], photo_bytes, compress_type=zipfile.ZIP_STORED)
                         logger.debug("Added speaker photo: %s", d["photo_epub_href"])
                     except Exception as exc:
                         logger.warning(
@@ -676,7 +685,7 @@ def build_epub(
                 for epub_href, src_path, _manifest_id in d["inline_image_files"]:
                     try:
                         img_bytes = _resize_image(src_path, _MAX_INLINE_WIDTH)
-                        zf.writestr(epub_href, img_bytes)
+                        zf.writestr(epub_href, img_bytes, compress_type=zipfile.ZIP_STORED)
                         logger.debug("Added inline image: %s", epub_href)
                     except Exception as exc:
                         logger.warning(
@@ -684,6 +693,14 @@ def build_epub(
                             src_path.name,
                             exc,
                         )
+
+        # Verify ZIP integrity after close() — catches truncated writes or corrupt entries.
+        try:
+            bad = zipfile.ZipFile(output_path).testzip()
+            if bad is not None:
+                raise EpubError(f"EPUB ZIP verification failed: corrupt entry {bad!r}")
+        except zipfile.BadZipFile as exc:
+            raise EpubError(f"EPUB ZIP is not a valid ZIP file: {exc}") from exc
 
     except OSError as exc:
         raise EpubError(f"Failed to write EPUB to {output_path}: {exc}") from exc

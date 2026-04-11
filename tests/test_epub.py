@@ -687,3 +687,93 @@ def test_build_epub_raises_epub_error_on_write_failure(tmp_path: Path) -> None:
     with patch("zipfile.ZipFile", side_effect=OSError("disk full")):
         with pytest.raises(EpubError, match="Failed to write EPUB"):
             build_epub(conference, tmp_path, output)
+
+
+# ---------------------------------------------------------------------------
+# build_epub — ZIP integrity (#90)
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_zip_passes_testzip(tmp_path: Path) -> None:
+    """A freshly built EPUB must pass zipfile.testzip() with no corrupt entries."""
+    conference = _make_conference(n_talks=3)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    with zipfile.ZipFile(output) as zf:
+        result = zf.testzip()
+    assert result is None, (
+        f"zipfile.testzip() should return None for a valid ZIP, got: {result!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_epub — image compression (#91)
+# ---------------------------------------------------------------------------
+
+
+def test_build_epub_images_stored_not_deflated(tmp_path: Path) -> None:
+    """JPEG images in the EPUB must be stored (ZIP_STORED), not Deflate-compressed."""
+    conference = _make_conference(n_talks=2)
+    output = tmp_path / "test.epub"
+
+    # Add a cover image and speaker photos so we have something to check
+    images_dir = tmp_path
+    cover_path = images_dir / "cover.jpg"
+    _make_jpeg(cover_path, size=(800, 450))
+
+    speakers_dir = images_dir / "speakers"
+    speakers_dir.mkdir()
+    for talk in conference.talks:
+        photo_path = speakers_dir / f"{talk.talk_index:03d}-{talk.speaker.replace(' ', '-')}.jpg"
+        _make_jpeg(photo_path, size=(300, 300))
+        talk.speaker_image_url = "https://www.churchofjesuschrist.org/imgs/test"
+
+    conference.cover_image_url = "https://www.churchofjesuschrist.org/imgs/cover"
+
+    build_epub(conference, images_dir, output)
+
+    with zipfile.ZipFile(output) as zf:
+        for info in zf.infolist():
+            if info.filename.startswith("images/"):
+                assert info.compress_type == zipfile.ZIP_STORED, (
+                    f"Image {info.filename!r} should be ZIP_STORED, "
+                    f"got compress_type={info.compress_type}"
+                )
+            elif info.filename.endswith((".xhtml", ".css", ".opf", ".xml")):
+                assert info.compress_type == zipfile.ZIP_DEFLATED, (
+                    f"Text file {info.filename!r} should be ZIP_DEFLATED, "
+                    f"got compress_type={info.compress_type}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_transcript — footnote markers (#92)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_transcript_materializes_data_value_for_empty_markers() -> None:
+    """Empty elements with data-value must have their number materialized as text content.
+
+    The Church website uses CSS content: attr(data-value) to render footnote
+    numbers. The <sup> has no text content — only data-value. After stripping
+    data-*, the number must still be visible.
+    """
+    html = '<p>Text.<sup class="marker" data-value="1"></sup></p>'
+    result = _sanitize_transcript(html)
+    assert ">1<" in result, (
+        f"data-value '1' must be materialized as text content, got: {result!r}"
+    )
+    assert "data-value" not in result, (
+        f"data-value attribute must still be stripped after materialization, got: {result!r}"
+    )
+
+
+def test_sanitize_transcript_preserves_existing_text_over_data_value() -> None:
+    """If an element already has text content, data-value must not overwrite it."""
+    html = '<span data-value="X">Already has text</span>'
+    result = _sanitize_transcript(html)
+    assert "Already has text" in result, "Existing text content must be preserved"
+    # data-value should be stripped, but it should NOT replace the existing text
+    assert ">X<" not in result, (
+        f"data-value 'X' must not overwrite existing text content, got: {result!r}"
+    )
