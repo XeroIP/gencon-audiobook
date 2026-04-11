@@ -26,6 +26,8 @@ _COPYRIGHT = (
 _MAX_PHOTO_WIDTH = 300   # px — speaker photos (per epub-style.md)
 _MAX_INLINE_WIDTH = 600  # px — inline body images (larger, they're content not thumbnails)
 _JPEG_QUALITY = 85       # JPEG quality for all embedded images
+_COVER_WIDTH = 1200      # px — portrait cover canvas width
+_COVER_HEIGHT = 1800     # px — portrait cover canvas height (2:3 ratio)
 
 # Void elements that must be self-closed in XHTML
 _VOID_RE = re.compile(
@@ -285,6 +287,44 @@ def _resize_image(src_path: Path, max_width: int) -> bytes:
 def _resize_photo(src_path: Path) -> bytes:
     """Load a speaker photo and resize to at most _MAX_PHOTO_WIDTH pixels wide."""
     return _resize_image(src_path, _MAX_PHOTO_WIDTH)
+
+
+def _make_portrait_cover(src_path: Path) -> bytes:
+    """Compose a portrait EPUB cover from a landscape source image.
+
+    The Church website provides a landscape banner (16:9) as the conference
+    cover image. EPUB covers should be portrait to display correctly in
+    reader library grids. This function places the landscape image centered
+    on a neutral gray 2:3 portrait canvas.
+
+    Args:
+        src_path: Path to the source landscape JPEG.
+
+    Returns:
+        JPEG bytes of the portrait cover (_COVER_WIDTH x _COVER_HEIGHT).
+    """
+    with Image.open(src_path) as raw:
+        src: Image.Image = raw.convert("RGB") if raw.mode != "RGB" else raw
+
+        # Scale source image to fit within canvas width with 50px margin each side
+        max_src_w = _COVER_WIDTH - 100
+        if src.width > max_src_w:
+            scale = max_src_w / src.width
+            new_w = max_src_w
+            new_h = int(src.height * scale)
+        else:
+            new_w, new_h = src.width, src.height
+        src_scaled: Image.Image = src.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        canvas = Image.new("RGB", (_COVER_WIDTH, _COVER_HEIGHT), color=(128, 128, 128))
+        # Center horizontally; position in the upper-middle of the canvas
+        x = (_COVER_WIDTH - new_w) // 2
+        y = (_COVER_HEIGHT - new_h) // 2
+        canvas.paste(src_scaled, (x, y))
+
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
 
 
 def _xhtml_wrap(
@@ -708,10 +748,12 @@ def build_epub(
                 logger.debug("Added talk page: text/%s", d["filename"])
 
             if has_cover:
-                # JPEGs are already compressed — store them to avoid double-compression
-                # and compatibility issues on older e-ink readers.
-                zf.write(cover_src, "images/cover.jpg", compress_type=zipfile.ZIP_STORED)
-                logger.debug("Added cover image")
+                # Compose a portrait cover from the landscape source image —
+                # e-reader library grids expect portrait (2:3) covers.
+                # JPEGs are already compressed — store to avoid double-compression.
+                cover_bytes = _make_portrait_cover(cover_src)
+                zf.writestr("images/cover.jpg", cover_bytes, compress_type=zipfile.ZIP_STORED)
+                logger.debug("Added cover image (portrait composition)")
 
             for d in talk_file_data:
                 if d["photo_src"] and d["photo_epub_href"]:

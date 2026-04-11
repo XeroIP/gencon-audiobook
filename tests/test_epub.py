@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import re
 import zipfile
 from pathlib import Path
@@ -12,6 +13,7 @@ from PIL import Image
 from conftest import make_jpeg as _make_jpeg
 from gencon_audiobook.epub_builder import (
     EpubError,
+    _make_portrait_cover,
     _sanitize_transcript,
     _void_to_xhtml,
     build_epub,
@@ -879,3 +881,48 @@ def test_build_epub_css_has_transcript_img_rule(tmp_path: Path) -> None:
         "style.css must include a .transcript img rule for inline image sizing"
     )
     assert "max-width" in css, "The .transcript img rule must include max-width"
+
+
+# ---------------------------------------------------------------------------
+# _make_portrait_cover (#95)
+# ---------------------------------------------------------------------------
+
+
+def test_make_portrait_cover_produces_portrait_dimensions(tmp_path: Path) -> None:
+    """Portrait cover output must be taller than wide (height > width)."""
+    src = tmp_path / "landscape.jpg"
+    _make_jpeg(src, size=(800, 450))
+    result = _make_portrait_cover(src)
+
+    with Image.open(io.BytesIO(result)) as img:
+        assert img.height > img.width, (
+            f"Portrait cover must be taller than wide, got {img.width}x{img.height}"
+        )
+
+
+def test_make_portrait_cover_output_is_jpeg(tmp_path: Path) -> None:
+    """Portrait cover must be a valid JPEG."""
+    src = tmp_path / "landscape.jpg"
+    _make_jpeg(src, size=(800, 450))
+    result = _make_portrait_cover(src)
+
+    assert result[:2] == b"\xff\xd8", (
+        "Portrait cover bytes must start with JPEG magic bytes"
+    )
+
+
+def test_make_portrait_cover_uses_expected_dimensions(tmp_path: Path) -> None:
+    """Portrait cover must use the defined canvas dimensions (1200x1800)."""
+    from gencon_audiobook.epub_builder import _COVER_HEIGHT, _COVER_WIDTH
+
+    src = tmp_path / "landscape.jpg"
+    _make_jpeg(src, size=(800, 450))
+    result = _make_portrait_cover(src)
+
+    with Image.open(io.BytesIO(result)) as img:
+        assert img.width == _COVER_WIDTH, (
+            f"Cover width must be {_COVER_WIDTH}, got {img.width}"
+        )
+        assert img.height == _COVER_HEIGHT, (
+            f"Cover height must be {_COVER_HEIGHT}, got {img.height}"
+        )
