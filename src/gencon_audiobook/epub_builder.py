@@ -276,17 +276,25 @@ def _resize_photo(src_path: Path) -> bytes:
     return _resize_image(src_path, _MAX_PHOTO_WIDTH)
 
 
-def _xhtml_wrap(title: str, body: str, css_href: str) -> str:
+def _xhtml_wrap(
+    title: str,
+    body: str,
+    css_href: str,
+    body_epub_type: str | None = None,
+) -> str:
     """Wrap body content in a complete XHTML5 document.
 
     Args:
         title: Document title for the <title> element.
         body: XHTML body content (must be valid XML).
         css_href: Relative path to the stylesheet from this document's location.
+        body_epub_type: Optional epub:type value for the <body> element
+            (e.g., "cover", "chapter"). Omitted when None.
 
     Returns:
         Complete XHTML5 document as a string.
     """
+    body_attrs = f' epub:type="{body_epub_type}"' if body_epub_type else ""
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<!DOCTYPE html>\n'
@@ -298,7 +306,7 @@ def _xhtml_wrap(title: str, body: str, css_href: str) -> str:
         f'  <title>{escape(title)}</title>\n'
         f'  <link rel="stylesheet" type="text/css" href="{css_href}"/>\n'
         '</head>\n'
-        '<body>\n'
+        f'<body{body_attrs}>\n'
         f'{body}\n'
         '</body>\n'
         '</html>\n'
@@ -325,7 +333,7 @@ def _cover_page(conference_title: str, has_cover_image: bool) -> str:
         )
     else:
         body = f'<h1 class="cover-title">{escape(conference_title)}</h1>'
-    return _xhtml_wrap(conference_title, body, css_href="../style.css")
+    return _xhtml_wrap(conference_title, body, css_href="../style.css", body_epub_type="cover")
 
 
 def _copyright_page(conference_title: str, year: int) -> str:
@@ -390,7 +398,12 @@ def _talk_page(
         parts.append('<div class="transcript"><p>[Transcript not available.]</p></div>')
 
     body = "\n".join(parts)
-    return _xhtml_wrap(f"{talk_title} \u2014 {speaker}", body, css_href="../style.css")
+    return _xhtml_wrap(
+        f"{talk_title} \u2014 {speaker}",
+        body,
+        css_href="../style.css",
+        body_epub_type="chapter",
+    )
 
 
 def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
@@ -428,7 +441,28 @@ def _nav_xhtml(conference: Conference, talk_hrefs: dict[int, str]) -> str:
         toc.append('      </ol>')
         toc.append('    </li>')
     toc += ['  </ol>', '</nav>']
-    body = "\n".join(toc)
+
+    # Landmarks nav: tells reading systems where the cover, TOC, and body
+    # matter begin. The hidden attribute prevents visual rendering while
+    # keeping the structure machine-readable for accessibility tools.
+    first_talk_href = ""
+    for session in conference.sessions:
+        if session.talks:
+            first_talk_href = talk_hrefs[session.talks[0].talk_index]
+            break
+    landmarks = [
+        '<nav epub:type="landmarks" hidden="hidden">',
+        '  <h2>Landmarks</h2>',
+        '  <ol>',
+        '    <li><a epub:type="cover" href="text/cover.xhtml">Cover</a></li>',
+        '    <li><a epub:type="toc" href="#toc">Table of Contents</a></li>',
+        f'    <li><a epub:type="bodymatter" href="{first_talk_href or "text/copyright.xhtml"}">'
+        'Start of Content</a></li>',
+        '  </ol>',
+        '</nav>',
+    ]
+
+    body = "\n".join(toc) + "\n" + "\n".join(landmarks)
 
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
