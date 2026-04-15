@@ -41,9 +41,9 @@ def _setup_logging(verbose: bool) -> None:
     """Configure console logging using Rich.
 
     Args:
-        verbose: If True, show DEBUG messages on the console; otherwise INFO.
+        verbose: If True, show DEBUG messages on the console; otherwise WARNING.
     """
-    log_level = logging.DEBUG if verbose else logging.INFO
+    log_level = logging.DEBUG if verbose else logging.WARNING
     console_handler = RichHandler(
         level=log_level,
         console=console,
