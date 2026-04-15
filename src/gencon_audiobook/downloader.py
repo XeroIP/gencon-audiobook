@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 
 import requests
 from PIL import Image
@@ -227,7 +228,8 @@ def _get_thread_session() -> requests.Session:
     """
     if not hasattr(_thread_locals, "session"):
         _thread_locals.session = _make_session()
-    return _thread_locals.session
+    # threading.local attributes are typed as Any; cast makes the return type explicit.
+    return cast(requests.Session, _thread_locals.session)
 
 
 def _audio_path(output_dir: Path, talk: Talk) -> Path:
