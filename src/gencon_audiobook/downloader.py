@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 
@@ -26,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 _DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB chunks for streaming downloads
 _JPEG_QUALITY = 85              # JPEG quality for converted images
+_IMAGE_WORKERS = 8              # concurrent image download threads
+
+# Thread-local storage so each worker gets its own requests.Session.
+# requests.Session is NOT thread-safe; sharing one across threads causes
+# intermittent connection errors and garbled responses.
+_thread_locals: threading.local = threading.local()
 
 
 class DownloadError(Exception):
@@ -212,6 +220,16 @@ def _make_session() -> requests.Session:
     return session
 
 
+def _get_thread_session() -> requests.Session:
+    """Return the requests.Session for the current thread, creating it on first access.
+
+    Each thread gets its own Session because requests.Session is not thread-safe.
+    """
+    if not hasattr(_thread_locals, "session"):
+        _thread_locals.session = _make_session()
+    return _thread_locals.session
+
+
 def _audio_path(output_dir: Path, talk: Talk) -> Path:
     """Return the destination path for a talk's MP3."""
     name = sanitize_filename(talk.title)
@@ -287,21 +305,16 @@ def download_conference(
         logger.info("Nothing to download.")
         return []
 
-    logger.info(
-        "Downloading %d file(s) for %s",
-        len(queue),
-        conference.title,
+    image_queue = [(url, dest, label) for url, dest, label, is_image, _ in queue if is_image]
+    audio_queue = [(url, dest, label, talk) for url, dest, label, is_image, talk in queue if not is_image]
+
+    logger.debug(
+        "Download queue: %d audio, %d image(s)",
+        len(audio_queue),
+        len(image_queue),
     )
 
     overall_progress = Progress(
-        SpinnerColumn(),
-        MofNCompleteColumn(),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingWithLabel(compact=True),
-        TextColumn("[progress.description]{task.description}"),
-    )
-    file_progress = Progress(
         SpinnerColumn(),
         MofNCompleteColumn(),
         BarColumn(),
@@ -313,16 +326,42 @@ def download_conference(
     failed: list[str] = []
     failed_talks: list[Talk] = []
 
-    with overall_progress, file_progress:
+    with overall_progress:
         overall_task = overall_progress.add_task("Downloading files", total=len(queue))
 
-        for url, dest, label, is_image, queue_talk in queue:
+        # Images: parallel downloads via ThreadPoolExecutor.
+        # Each worker creates its own session via _get_thread_session() because
+        # requests.Session is not thread-safe.
+        if image_queue:
+
+            def _download_one_image(args: tuple[str, Path, str]) -> str | None:
+                """Worker: download one image. Returns label on failure, None on success."""
+                url, dest, label = args
+                try:
+                    _download_image(url, dest, _get_thread_session(), retries=3)
+                    return None
+                except (DownloadError, ValueError) as exc:
+                    logger.error("Failed to download %s: %s", label, exc)
+                    return label
+                finally:
+                    overall_progress.advance(overall_task)
+
+            workers = min(_IMAGE_WORKERS, len(image_queue))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(_download_one_image, item): item for item in image_queue}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is not None:
+                        failed.append(result)
+
+        # Audio: sequential with courtesy delay between requests.
+        # MP3s are large; parallel streaming of many large files simultaneously
+        # would be impolite to the server and offers little wall-clock benefit
+        # since the bottleneck is bandwidth, not latency.
+        for url, dest, label, queue_talk in audio_queue:
             overall_progress.update(overall_task, description=label)
             try:
-                if is_image:
-                    _download_image(url, dest, session, retries=3)
-                else:
-                    download_file(url, dest, session, retries=3)
+                download_file(url, dest, session, retries=3)
                 time.sleep(delay)
             except (DownloadError, ValueError) as exc:
                 logger.error("Failed to download %s: %s", label, exc)
