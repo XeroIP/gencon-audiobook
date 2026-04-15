@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from .models import Conference, InlineImage, Session, Talk
 
@@ -98,7 +99,7 @@ def load_cache(directory: Path, expected_url: str) -> Conference | None:
 # ---------------------------------------------------------------------------
 
 
-def _conference_from_dict(d: dict) -> Conference:  # type: ignore[type-arg]
+def _conference_from_dict(d: dict[str, Any]) -> Conference:
     """Reconstruct a Conference dataclass from a plain dict."""
     sessions = [_session_from_dict(s) for s in d["sessions"]]
     return Conference(
@@ -111,13 +112,13 @@ def _conference_from_dict(d: dict) -> Conference:  # type: ignore[type-arg]
     )
 
 
-def _session_from_dict(d: dict) -> Session:  # type: ignore[type-arg]
+def _session_from_dict(d: dict[str, Any]) -> Session:
     """Reconstruct a Session dataclass from a plain dict."""
     talks = [_talk_from_dict(t) for t in d["talks"]]
     return Session(name=d["name"], number=d["number"], talks=talks)
 
 
-def _talk_from_dict(d: dict) -> Talk:  # type: ignore[type-arg]
+def _talk_from_dict(d: dict[str, Any]) -> Talk:
     """Reconstruct a Talk dataclass from a plain dict.
 
     ``duration_seconds`` is always set to 0.0 — it was stripped during
