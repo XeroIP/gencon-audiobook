@@ -15,6 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .audio import AudioError, BuildStats, build_m4b
+from .cache import CACHE_FILENAME, load_cache, save_cache
 from .downloader import DownloadError, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
@@ -214,6 +215,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     help="Overwrite existing output files instead of skipping.",
 )
 @click.option(
+    "--force-scrape",
+    is_flag=True,
+    default=False,
+    help="Re-scrape conference data from the website even if a local cache exists.",
+)
+@click.option(
     "--bitrate",
     default=None,
     help="AAC encoding bitrate (e.g., 32k, 64k, 128k). Default: match source MP3.",
@@ -232,6 +239,7 @@ def main(
     epub_only: bool,
     verbose: bool,
     overwrite: bool,
+    force_scrape: bool,
     bitrate: str | None,
     sample_rate: int | None,
 ) -> None:
@@ -246,6 +254,7 @@ def main(
             audiobook_only=audiobook_only,
             epub_only=epub_only,
             overwrite=overwrite,
+            force_scrape=force_scrape,
             bitrate=bitrate,
             sample_rate=sample_rate,
         )
@@ -336,6 +345,7 @@ def _run(
     audiobook_only: bool,
     epub_only: bool,
     overwrite: bool,
+    force_scrape: bool,
     bitrate: str | None,
     sample_rate: int | None,
 ) -> None:
@@ -345,16 +355,33 @@ def _run(
 
     conf_title, conf_url = _select_conference(conference)
 
-    # Scrape conference details — progress bar printed inside scrape_conference()
-    t0 = time.monotonic()
-    try:
-        conf_obj = scrape_conference(conf_url)
-    except ScraperError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-    phase_times["scrape"] = time.monotonic() - t0
+    # Resolve the output directory early — conf_title matches conf_obj.title, so we
+    # can check the cache before scraping rather than after.
+    conf_output_dir = output_dir / conf_title
 
-    conf_output_dir = output_dir / conf_obj.title
+    # Load from cache if available and --force-scrape not set.
+    conf_obj = None
+    if not force_scrape:
+        conf_obj = load_cache(conf_output_dir, expected_url=conf_url)
+        if conf_obj is not None:
+            console.print(
+                f"Loaded {len(conf_obj.talks)} talks from cache "
+                f"({conf_output_dir / CACHE_FILENAME}). "
+                "Use --force-scrape to refresh."
+            )
+
+    if conf_obj is None:
+        # Scrape conference details — progress bar printed inside scrape_conference()
+        t0 = time.monotonic()
+        try:
+            conf_obj = scrape_conference(conf_url)
+        except ScraperError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        phase_times["scrape"] = time.monotonic() - t0
+        conf_output_dir.mkdir(parents=True, exist_ok=True)
+        save_cache(conf_obj, conf_output_dir)
+        logger.info("Saved conference cache: %s", conf_output_dir / CACHE_FILENAME)
 
     # Wire up the log file now that we know where output goes.
     try:
