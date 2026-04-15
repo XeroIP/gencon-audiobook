@@ -24,7 +24,7 @@ test-release\Scripts\activate
 # Mac/Linux:
 source test-release/bin/activate
 
-pip install gencon-audiobook==0.1.2   # replace with the version being tested
+pip install gencon-audiobook==0.1.5   # replace with the version being tested
 ```
 
 Verify the entry point and version:
@@ -50,11 +50,15 @@ gencon-audiobook --epub-only --conference "April 2024" --output ~/gc-test
 - Command exits 0 with a completion report printed
 - `~/gc-test/April 2024 General Conference/April 2024 General Conference.epub` exists and is 10–20 MB
 - Open the epub in Calibre, Apple Books, or your reader and verify:
-  - Cover page with conference image
+  - Cover page displays as portrait (taller than wide) in the library grid
   - Copyright page (Intellectual Reserve, Inc.)
   - Navigable TOC with session headings and talk entries
+  - Session headings in the TOC link to session divider pages (not directly to the first talk)
+  - Landmarks nav visible in Calibre's TOC panel (cover, TOC, Start of Content entries)
   - Per-talk chapters with speaker photo, name byline, and full transcript
+  - Footnote numbers visible inline (not blank superscripts)
   - No garbled text (mojibake) in speaker names or talk titles
+  - No web CSS class names visible as raw text in transcripts
 
 ---
 
