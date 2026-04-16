@@ -128,6 +128,19 @@ aside {
   padding-left: 1em;
   font-size: 0.85em;
 }
+
+.transcript.numbered {
+  margin-left: 2.5em;
+}
+
+.para-num {
+  float: left;
+  width: 2em;
+  margin-left: -2.5em;
+  text-align: right;
+  font-size: 0.8em;
+  line-height: inherit;
+}
 """
 
 
@@ -161,6 +174,7 @@ def _void_to_xhtml(html: str) -> str:
 def _sanitize_transcript(
     raw_html: str | None,
     inline_image_map: dict[str, str] | None = None,
+    paragraph_numbers: bool = False,
 ) -> str:
     """Strip unsafe elements and external URLs from transcript HTML for EPUB embedding.
 
@@ -174,11 +188,17 @@ def _sanitize_transcript(
     img attributes (srcset, sizes, loading, class) are stripped to just src and
     alt. Void elements are converted to XHTML self-closing form.
 
+    If paragraph_numbers is True, each top-level transcript paragraph receives
+    id="pN" and a prepended <span class="para-num">N</span> for left-margin
+    numbering. Paragraphs inside <aside> (footnote bodies) are excluded.
+
     Args:
         raw_html: Raw HTML fragment from a scraped talk page, or None.
         inline_image_map: Optional mapping of original image URL -> EPUB-relative
             path (e.g., "../images/inline-001-assetid.jpg"). Images whose URL
             matches a key are kept with the local src; others are removed.
+        paragraph_numbers: If True, prepend paragraph numbers to each <p> in the
+            transcript and add id="pN" attributes.
 
     Returns:
         Sanitized XHTML fragment string, or empty string if input is None/empty.
@@ -284,6 +304,21 @@ def _sanitize_transcript(
             del tag["id"]
         if "class" in tag.attrs:
             del tag["class"]
+
+    if paragraph_numbers:
+        # Number each <p> that is not inside a footnote <aside>.
+        # Prepend <span class="para-num">N</span> and add id="pN" for deep-linking.
+        # Numbers restart at 1 per call (i.e., per talk).
+        num = 0
+        for p_tag in soup.find_all("p"):
+            if p_tag.find_parent("aside"):
+                continue  # footnote content — do not number
+            num += 1
+            p_tag["id"] = f"p{num}"
+            span = soup.new_tag("span")
+            span["class"] = "para-num"
+            span.string = str(num)
+            p_tag.insert(0, span)
 
     return _void_to_xhtml(str(soup))
 
@@ -461,6 +496,7 @@ def _talk_page(
     transcript_html: str | None,
     photo_href: str | None,
     inline_image_map: dict[str, str] | None = None,
+    paragraph_numbers: bool = False,
 ) -> str:
     """Generate a talk XHTML page with speaker photo, byline, title, and transcript.
 
@@ -470,6 +506,7 @@ def _talk_page(
         transcript_html: Raw transcript HTML fragment, or None.
         photo_href: Relative path to speaker photo from this page's location, or None.
         inline_image_map: Optional mapping of original image URL -> EPUB-relative path.
+        paragraph_numbers: If True, add left-margin paragraph numbers to transcript.
 
     Returns:
         Complete XHTML document string.
@@ -488,11 +525,16 @@ def _talk_page(
         f'<h1 class="talk-title">{escape(talk_title)}</h1>'
     )
 
-    sanitized = _sanitize_transcript(transcript_html, inline_image_map=inline_image_map)
+    sanitized = _sanitize_transcript(
+        transcript_html,
+        inline_image_map=inline_image_map,
+        paragraph_numbers=paragraph_numbers,
+    )
+    transcript_class = "transcript numbered" if paragraph_numbers else "transcript"
     if sanitized:
-        parts.append(f'<div class="transcript">\n{sanitized}\n</div>')
+        parts.append(f'<div class="{transcript_class}">\n{sanitized}\n</div>')
     else:
-        parts.append('<div class="transcript"><p>[Transcript not available.]</p></div>')
+        parts.append(f'<div class="{transcript_class}"><p>[Transcript not available.]</p></div>')
 
     body = "\n".join(parts)
     return _xhtml_wrap(
@@ -673,6 +715,7 @@ def build_epub(
     conference: Conference,
     images_dir: Path,
     output_path: Path,
+    paragraph_numbers: bool = False,
 ) -> None:
     """Build an EPUB 3 companion with full transcripts and speaker photos.
 
@@ -697,6 +740,8 @@ def build_epub(
             text; talks with no transcript get a placeholder.
         images_dir: Directory containing cover.jpg and speakers/*.jpg.
         output_path: Destination path for the .epub file. Parent is created if needed.
+        paragraph_numbers: If True, prepend left-margin paragraph numbers to each
+            transcript paragraph and add id="pN" attributes for deep-linking.
 
     Raises:
         EpubError: if the output file cannot be written.
@@ -852,6 +897,7 @@ def build_epub(
                     talk.transcript_html,
                     d["photo_page_href"],
                     inline_image_map=d["inline_image_map"] or None,
+                    paragraph_numbers=paragraph_numbers,
                 )
                 zf.writestr(f"text/{d['filename']}", page)
                 logger.debug("Added talk page: text/%s", d["filename"])

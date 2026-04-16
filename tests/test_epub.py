@@ -1022,3 +1022,118 @@ def test_build_epub_spine_includes_nav_linear_no(tmp_path: Path) -> None:
     opf = _epub_read(output, "content.opf").decode()
     assert 'idref="nav"' in opf, "nav must be referenced in the spine"
     assert 'linear="no"' in opf, "nav spine entry must have linear='no'"
+
+
+# ---------------------------------------------------------------------------
+# Paragraph numbers
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_transcript_paragraph_numbers_adds_spans() -> None:
+    """With paragraph_numbers=True, each <p> gets a <span class='para-num'>."""
+    html = "<p>First.</p><p>Second.</p><p>Third.</p>"
+    result = _sanitize_transcript(html, paragraph_numbers=True)
+    assert '<span class="para-num">1</span>' in result, "First paragraph span missing"
+    assert '<span class="para-num">2</span>' in result, "Second paragraph span missing"
+    assert '<span class="para-num">3</span>' in result, "Third paragraph span missing"
+
+
+def test_sanitize_transcript_paragraph_numbers_adds_ids() -> None:
+    """With paragraph_numbers=True, each <p> gets id='pN'."""
+    html = "<p>Alpha.</p><p>Beta.</p>"
+    result = _sanitize_transcript(html, paragraph_numbers=True)
+    assert 'id="p1"' in result, "First paragraph id missing"
+    assert 'id="p2"' in result, "Second paragraph id missing"
+
+
+def test_sanitize_transcript_paragraph_numbers_off_by_default() -> None:
+    """Without paragraph_numbers, no <span class='para-num'> or id='pN' is added."""
+    html = "<p>Only paragraph.</p>"
+    result = _sanitize_transcript(html)
+    assert "para-num" not in result, "para-num span must be absent by default"
+    assert 'id="p1"' not in result, "paragraph id must be absent by default"
+
+
+def test_sanitize_transcript_paragraph_numbers_skips_footnotes() -> None:
+    """Paragraphs inside <aside epub:type='footnote'> are not numbered."""
+    html = (
+        '<p>Main text.</p>'
+        '<p id="note1">Footnote content.</p>'
+    )
+    result = _sanitize_transcript(html, paragraph_numbers=True)
+    # Main paragraph should be numbered
+    assert '<span class="para-num">1</span>' in result, "Main paragraph must be numbered"
+    # Footnote is inside an aside (wrapping happens in sanitization), so it should not have para-num=2
+    assert '<span class="para-num">2</span>' not in result, "Footnote paragraph must not be numbered"
+
+
+def test_build_epub_paragraph_numbers_transcript_class(tmp_path: Path) -> None:
+    """With paragraph_numbers=True, talk pages use class='transcript numbered'."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output, paragraph_numbers=True)
+
+    with zipfile.ZipFile(output) as zf:
+        names = [n for n in zf.namelist() if n.startswith("text/talk-")]
+        assert names, "Expected at least one talk page"
+        page = zf.read(names[0]).decode()
+    assert 'class="transcript numbered"' in page, \
+        "Talk page must use 'transcript numbered' class when paragraph numbers enabled"
+
+
+def test_build_epub_no_paragraph_numbers_transcript_class(tmp_path: Path) -> None:
+    """Without paragraph_numbers, talk pages use class='transcript' only."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    with zipfile.ZipFile(output) as zf:
+        names = [n for n in zf.namelist() if n.startswith("text/talk-")]
+        page = zf.read(names[0]).decode()
+    assert 'class="transcript"' in page, "Default class must be 'transcript'"
+    assert "numbered" not in page, "Default output must not contain 'numbered'"
+
+
+def test_build_epub_paragraph_numbers_restart_per_talk(tmp_path: Path) -> None:
+    """Paragraph numbers restart at 1 for each talk."""
+    conference = _make_conference(n_talks=3)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output, paragraph_numbers=True)
+
+    with zipfile.ZipFile(output) as zf:
+        talk_pages = sorted(n for n in zf.namelist() if n.startswith("text/talk-"))
+        for page_name in talk_pages:
+            page = zf.read(page_name).decode()
+            assert 'id="p1"' in page, \
+                f"Paragraph numbering must start at 1 in each talk, missing in {page_name}"
+            assert '<span class="para-num">1</span>' in page, \
+                f"First paragraph span missing in {page_name}"
+
+
+def test_build_epub_css_has_para_num_rule(tmp_path: Path) -> None:
+    """The stylesheet must contain a .para-num rule."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    css = _epub_read(output, "style.css").decode("utf-8")
+    assert ".para-num" in css, "Stylesheet must define .para-num rule"
+
+
+def test_build_epub_css_para_num_theme_safe(tmp_path: Path) -> None:
+    """.para-num must not use color, background-color, font-family, or absolute sizes."""
+    conference = _make_conference(n_talks=1)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    css = _epub_read(output, "style.css").decode("utf-8")
+    css_no_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+
+    # Extract just the .para-num rule block
+    match = re.search(r"\.para-num\s*\{([^}]*)\}", css_no_comments, re.DOTALL)
+    assert match, ".para-num rule not found in stylesheet"
+    block = match.group(1)
+
+    assert not re.search(r"\bcolor\s*:", block), ".para-num must not set color"
+    assert not re.search(r"\bbackground(-color)?\s*:", block), ".para-num must not set background"
+    assert not re.search(r"\bfont-family\s*:", block), ".para-num must not set font-family"
+    assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", block), \
+        ".para-num must not use absolute font-size units"

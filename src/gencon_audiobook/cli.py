@@ -231,6 +231,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     type=int,
     help="Audio sample rate in Hz (e.g., 22050, 44100). Default: match source MP3.",
 )
+@click.option(
+    "--epub-paragraph-numbers",
+    is_flag=True,
+    default=False,
+    help="Add left-margin paragraph numbers to each talk transcript in the EPUB.",
+)
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
     output: str,
@@ -242,6 +248,7 @@ def main(
     force_scrape: bool,
     bitrate: str | None,
     sample_rate: int | None,
+    epub_paragraph_numbers: bool,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _check_python_version()
@@ -257,6 +264,7 @@ def main(
             force_scrape=force_scrape,
             bitrate=bitrate,
             sample_rate=sample_rate,
+            epub_paragraph_numbers=epub_paragraph_numbers,
         )
     except KeyboardInterrupt:
         console.print(
@@ -348,6 +356,7 @@ def _run(
     force_scrape: bool,
     bitrate: str | None,
     sample_rate: int | None,
+    epub_paragraph_numbers: bool = False,
 ) -> None:
     """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()
@@ -466,6 +475,7 @@ def _run(
                         conference=conf_obj,
                         images_dir=conf_output_dir,
                         output_path=epub_path,
+                        paragraph_numbers=epub_paragraph_numbers,
                     )
             except EpubError as exc:
                 click.echo(f"Error: EPUB build failed.\n{exc}", err=True)
