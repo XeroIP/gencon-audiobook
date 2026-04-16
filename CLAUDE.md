@@ -34,7 +34,9 @@ See `docs/spec.md` for the full specification. Critical points:
 - m4b chapters: ffmpeg FFMETADATA1 format — mutagen is for verification only, NOT writing
 - Conference scope: scrape ALL available conferences; user selects
 - ffmpeg: check system PATH first, then static-ffmpeg fallback
-- CLI flags: `--audiobook-only` / `--epub-only`
+- CLI flags: `--audiobook-only` / `--epub-only` / `--force-scrape`
+- Conference metadata cached in `conference.json` after first scrape; `cache.py` handles serialize/deserialize
+- Image downloads parallelized via `ThreadPoolExecutor` (8 workers, thread-local sessions); audio sequential
 
 ## Copyright
 Downloaded content is copyright Intellectual Reserve, Inc. Tool code is MIT licensed.
