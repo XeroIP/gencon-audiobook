@@ -529,7 +529,7 @@ def parse_conference_listing(html: str) -> list[Session]:
 
     # Fallback: HTML traversal
     if not sessions:
-        logger.warning("Listing JSON selector found nothing; falling back to HTML traversal")
+        logger.debug("Listing JSON selector found nothing; falling back to HTML traversal")
         sessions = _sessions_from_html(html)
         if sessions:
             logger.debug("Listing HTML fallback: %d sessions", len(sessions))
