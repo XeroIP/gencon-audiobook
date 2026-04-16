@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-15
+
+### Added
+- EPUB 3 popup footnotes: footnote superscript links (`href="#note*"`) are now
+  preserved through sanitization with `epub:type="noteref"`, and footnote body
+  elements are wrapped in `<aside epub:type="footnote">`. Modern e-readers
+  (Apple Books, Kobo, Thorium) display footnotes as dismissible popovers;
+  older readers fall back to an in-page jump.
+- Conference metadata cache: scraped `Conference` data is written to
+  `conference.json` after the first run. Subsequent runs load from cache,
+  skipping ~38 HTTP requests per conference. Use `--force-scrape` to bypass.
+- Parallel image downloads: cover image, speaker photos, and inline body images
+  now download concurrently (up to 8 threads), each with its own
+  `requests.Session`. Audio MP3s remain sequential.
+
+### Fixed
+- INFO-level log lines no longer appear on the console during normal runs.
+  Console handler threshold raised from INFO to WARNING; DEBUG and INFO messages
+  still appear in the log file and with `--verbose`.
+
 ## [0.1.5] - 2026-04-11
 
 ### Added
