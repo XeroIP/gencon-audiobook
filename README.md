@@ -59,6 +59,9 @@ gencon-audiobook --bitrate 32k --sample-rate 22050
 
 # Show detailed progress in the terminal
 gencon-audiobook --verbose
+
+# Add paragraph numbers to EPUB transcripts (useful for study groups and citations)
+gencon-audiobook --epub-paragraph-numbers
 ```
 
 For the full options reference, file size guide, and platform compatibility notes, see the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide).
