@@ -10,92 +10,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.6] - 2026-04-15
 
 ### Added
-- EPUB 3 popup footnotes: footnote superscript links (`href="#note*"`) are now
-  preserved through sanitization with `epub:type="noteref"`, and footnote body
-  elements are wrapped in `<aside epub:type="footnote">`. Modern e-readers
-  (Apple Books, Kobo, Thorium) display footnotes as dismissible popovers;
-  older readers fall back to an in-page jump.
-- Conference metadata cache: scraped `Conference` data is written to
-  `conference.json` after the first run. Subsequent runs load from cache,
-  skipping ~38 HTTP requests per conference. Use `--force-scrape` to bypass.
-- Parallel image downloads: cover image, speaker photos, and inline body images
-  now download concurrently (up to 8 threads), each with its own
-  `requests.Session`. Audio MP3s remain sequential.
+- EPUB 3 popup footnotes: footnote superscript links (`href="#note*"`) are now preserved through sanitization with `epub:type="noteref"`, and footnote body elements are wrapped in `<aside epub:type="footnote">`. Modern e-readers (Apple Books, Kobo, Thorium) display footnotes as dismissible popovers; older readers fall back to an in-page jump.
+- Conference metadata cache: scraped `Conference` data is written to `conference.json` after the first run. Subsequent runs load from cache, skipping ~38 HTTP requests per conference. Use `--force-scrape` to bypass.
+- Parallel image downloads: cover image, speaker photos, and inline body images now download concurrently (up to 8 threads), each with its own `requests.Session`. Audio MP3s remain sequential.
 
 ### Fixed
-- INFO-level log lines no longer appear on the console during normal runs.
-  Console handler threshold raised from INFO to WARNING; DEBUG and INFO messages
-  still appear in the log file and with `--verbose`.
+- INFO-level log lines no longer appear on the console during normal runs. Console handler threshold raised from INFO to WARNING; DEBUG and INFO messages still appear in the log file and with `--verbose`.
 
 ## [0.1.5] - 2026-04-11
 
 ### Added
-- Portrait cover image: landscape source image is centered on a 1200x1800 gray canvas,
-  producing a proper 2:3 portrait cover for reader library grids.
-- Session divider pages in the EPUB — each session gets a dedicated XHTML page so TOC
-  session headers link to a unique destination rather than the first talk in the session.
-- EPUB landmarks navigation (`<nav epub:type="landmarks">`) with cover, TOC, and
-  bodymatter entries, improving compatibility with Kindle and accessibility tools.
-- `epub:type` attributes on content documents: `"cover"` on cover.xhtml,
-  `"chapter"` on all talk pages.
-- Speaker photos now fetched at 800px resolution via IIIF URL upgrade (same technique
-  already used for the conference cover), improving sharpness in the EPUB.
-- Post-write ZIP integrity check: `testzip()` runs after the EPUB is written and raises
-  `EpubError` if any entry is corrupt or the file is not a valid ZIP.
+- Portrait cover image: landscape source image is centered on a 1200x1800 gray canvas, producing a proper 2:3 portrait cover for reader library grids.
+- Session divider pages in the EPUB — each session gets a dedicated XHTML page so TOC session headers link to a unique destination rather than the first talk in the session.
+- EPUB landmarks navigation (`<nav epub:type="landmarks">`) with cover, TOC, and bodymatter entries, improving compatibility with Kindle and accessibility tools.
+- `epub:type` attributes on content documents: `"cover"` on cover.xhtml, `"chapter"` on all talk pages.
+- Speaker photos now fetched at 800px resolution via IIIF URL upgrade (same technique already used for the conference cover), improving sharpness in the EPUB.
+- Post-write ZIP integrity check: `testzip()` runs after the EPUB is written and raises `EpubError` if any entry is corrupt or the file is not a valid ZIP.
 - `.transcript img` CSS rule added to constrain inline image sizing in reader apps.
-- Release notes now include the CHANGELOG section for the tagged version, prepended
-  above the auto-generated PR list in GitHub releases.
+- Release notes now include the CHANGELOG section for the tagged version, prepended above the auto-generated PR list in GitHub releases.
 
 ### Fixed
-- JPEG images (cover, speaker photos, inline images) are now stored uncompressed
-  (`ZIP_STORED`) in the EPUB ZIP, avoiding double-compression and compatibility
-  issues on older e-ink readers.
-- Footnote markers (`<sup data-value="1"></sup>`) now render visibly — the numeric
-  value is materialized as text content before the `data-*` stripping pass removes
-  the attribute.
-- Web CSS class names stripped from EPUB transcript HTML — classes like
-  `imageWrapper-wTPPD` and `body-block` reference React CSS with no EPUB rules.
-- `dcterms:modified` in `content.opf` now reflects the actual build timestamp
-  instead of a static conference date.
+- JPEG images (cover, speaker photos, inline images) are now stored uncompressed (`ZIP_STORED`) in the EPUB ZIP, avoiding double-compression and compatibility issues on older e-ink readers.
+- Footnote markers (`<sup data-value="1"></sup>`) now render visibly — the numeric value is materialized as text content before the `data-*` stripping pass removes the attribute.
+- Web CSS class names stripped from EPUB transcript HTML — classes like `imageWrapper-wTPPD` and `body-block` reference React CSS with no EPUB rules.
+- `dcterms:modified` in `content.opf` now reflects the actual build timestamp instead of a static conference date.
 
 ## [0.1.4] - 2026-04-11
 
 ### Added
-- Inline talk body images are now downloaded and embedded in the EPUB. Images
-  are extracted from talk pages (srcset parsed for largest resolution), stored
-  in `output_dir/inline/`, resized to max 600px wide, and written into the EPUB
-  ZIP with full OPF manifest entries.
-- Per-talk ffmpeg progress bar with real-time encoding progress during AAC
-  conversion; inner bar tracks each file, outer bar tracks total talks.
+- Inline talk body images are now downloaded and embedded in the EPUB. Images are extracted from talk pages (srcset parsed for largest resolution), stored in `output_dir/inline/`, resized to max 600px wide, and written into the EPUB ZIP with full OPF manifest entries.
+- Per-talk ffmpeg progress bar with real-time encoding progress during AAC conversion; inner bar tracks each file, outer bar tracks total talks.
 
 ### Fixed
-- EPUB filenames now use hyphens instead of spaces (e.g. `April-2024-General-Conference.xhtml`),
-  resolving ~770 PKG-010/RSC-020 epubcheck errors caused by spaces in IRI path segments.
-- All `<a>` link wrappers in EPUB transcripts are unwrapped (display text preserved),
-  resolving ~900 RSC-033/RSC-026/RSC-007 epubcheck errors from unresolvable external links.
-- `data-*` attributes and random web IDs stripped from EPUB transcript HTML, reducing
-  XHTML file sizes by ~15-20% and removing React/JS rendering artifacts.
-- Nav session headers changed from `<span>` to `<a>` linking to the first talk in the
-  session, improving Kindle and reader app compatibility.
-- Conference cover image resolution upgraded by rewriting IIIF URLs to request 800px
-  wide images instead of the 250px thumbnail used on the website.
+- EPUB filenames now use hyphens instead of spaces (e.g. `April-2024-General-Conference.xhtml`), resolving ~770 PKG-010/RSC-020 epubcheck errors caused by spaces in IRI path segments.
+- All `<a>` link wrappers in EPUB transcripts are unwrapped (display text preserved), resolving ~900 RSC-033/RSC-026/RSC-007 epubcheck errors from unresolvable external links.
+- `data-*` attributes and random web IDs stripped from EPUB transcript HTML, reducing XHTML file sizes by ~15-20% and removing React/JS rendering artifacts.
+- Nav session headers changed from `<span>` to `<a>` linking to the first talk in the session, improving Kindle and reader app compatibility.
+- Conference cover image resolution upgraded by rewriting IIIF URLs to request 800px wide images instead of the 250px thumbnail used on the website.
 
 ## [0.1.3] - 2026-04-11
 
 ### Added
-- Rich progress bars and spinners across all pipeline phases: conference fetch,
-  talk scraping (M/N bar with talk title), AAC conversion, download, m4b
-  verification, and EPUB build.
-- Countdown timer moved to immediately after the percentage on all progress bars,
-  with "remaining" label (e.g. `02:15 remaining`).
+- Rich progress bars and spinners across all pipeline phases: conference fetch, talk scraping (M/N bar with talk title), AAC conversion, download, m4b verification, and EPUB build.
+- Countdown timer moved to immediately after the percentage on all progress bars, with "remaining" label (e.g. `02:15 remaining`).
 - Conference name shown at the top of the completion report.
 
 ## [0.1.2] - 2026-04-09
 
 ### Added
-- Completion report printed after every successful run: total duration, chapter count,
-  source and output audio quality (bitrate/sample rate), file sizes, per-phase timing,
-  and a list of any talks that failed to download.
+- Completion report printed after every successful run: total duration, chapter count, source and output audio quality (bitrate/sample rate), file sizes, per-phase timing, and a list of any talks that failed to download.
 - `BuildStats` dataclass returned by `build_m4b()` for callers that need quality metadata.
 - Per-phase timing (scrape, download, audiobook, epub) using `time.monotonic()`.
 - `reset_robots_cache()` public function in `scraper.py` for test isolation.
@@ -107,48 +70,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.13 added to the CI test matrix.
 - Explicit `permissions` blocks on all GitHub Actions workflows (least-privilege).
 - All GitHub Actions pinned to commit SHAs for supply-chain security.
-- Live test deduplication: consecutive failures add a comment to the existing issue
-  instead of opening a duplicate.
+- Live test deduplication: consecutive failures add a comment to the existing issue instead of opening a duplicate.
 
 ### Fixed
-- Ghost zero-length chapter in the m4b output when a talk's MP3 was missing. Previously,
-  skipped talks contributed a dead chapter entry visible in audio players. Only successfully
-  converted talks now appear as chapters.
-- `ffprobe_path` was silently re-derived inside `convert_mp3_to_aac`, ignoring the path
-  passed by `build_m4b`. This broke setups where ffprobe is installed separately from ffmpeg.
-- HTTP 429 (Too Many Requests) was incorrectly treated as a fatal error. It is now retried
-  with exponential backoff like other transient failures.
-- Single quotes in the parent directory path caused a malformed ffmpeg concat file.
-  Full resolved paths are now properly escaped (`'` → `'\''`).
-- Subprocess `_run()` had no timeout, allowing a hung ffmpeg process to block indefinitely.
-  A 600-second timeout now raises `AudioError` with an actionable message.
-- ASCII transliteration in chapter titles now falls back to the original text when conversion
-  yields an empty string (e.g. for non-Latin scripts), rather than producing a blank title.
-- `\r` (carriage return) was not escaped in FFMETADATA1 chapter metadata, which could produce
-  malformed metadata files on some inputs.
-- `data:` URIs were not stripped during EPUB transcript sanitization, allowing potential
-  embedding of active content. They are now removed alongside `javascript:` URIs.
-- Dead `skipped` counter in `download_conference` was initialized but never incremented;
-  the associated log block was unreachable code. Both have been removed.
+- Ghost zero-length chapter in the m4b output when a talk's MP3 was missing. Previously, skipped talks contributed a dead chapter entry visible in audio players. Only successfully converted talks now appear as chapters.
+- `ffprobe_path` was silently re-derived inside `convert_mp3_to_aac`, ignoring the path passed by `build_m4b`. This broke setups where ffprobe is installed separately from ffmpeg.
+- HTTP 429 (Too Many Requests) was incorrectly treated as a fatal error. It is now retried with exponential backoff like other transient failures.
+- Single quotes in the parent directory path caused a malformed ffmpeg concat file. Full resolved paths are now properly escaped (`'` -> `'\''`).
+- Subprocess `_run()` had no timeout, allowing a hung ffmpeg process to block indefinitely. A 600-second timeout now raises `AudioError` with an actionable message.
+- ASCII transliteration in chapter titles now falls back to the original text when conversion yields an empty string (e.g. for non-Latin scripts), rather than producing a blank title.
+- `\r` (carriage return) was not escaped in FFMETADATA1 chapter metadata, which could produce malformed metadata files on some inputs.
+- `data:` URIs were not stripped during EPUB transcript sanitization, allowing potential embedding of active content. They are now removed alongside `javascript:` URIs.
+- Dead `skipped` counter in `download_conference` was initialized but never incremented; the associated log block was unreachable code. Both have been removed.
 
 ### Security
-- User-Agent is now derived at import time from the installed package version (`__version__`),
-  eliminating the stale hardcoded `0.1.0` string present in both `scraper.py` and
-  `downloader.py`. The string now correctly reflects the running version.
+- User-Agent is now derived at import time from the installed package version (`__version__`), eliminating the stale hardcoded `0.1.0` string present in both `scraper.py` and `downloader.py`. The string now correctly reflects the running version.
 - EPUB sanitizer strips `data:` URI scheme in addition to `javascript:` and external URLs.
-- PyPI publish workflow now requires tests to pass before uploading; the GitHub release job
-  now requires the publish job to succeed before creating the release.
+- PyPI publish workflow now requires tests to pass before uploading; the GitHub release job now requires the publish job to succeed before creating the release.
 - All GitHub Actions use per-job permissions rather than broad workflow-level grants.
 
 ### Changed
 - `User-Agent` string is now defined once in `utils.py` and imported by all HTTP clients.
-- Shared test helpers (`make_silent_mp3`, `make_jpeg`, `requires_ffmpeg`) consolidated in
-  `conftest.py`, eliminating duplication across `test_audio.py`, `test_epub.py`, and
-  `test_integration.py`.
+- Shared test helpers (`make_silent_mp3`, `make_jpeg`, `requires_ffmpeg`) consolidated in `conftest.py`, eliminating duplication across `test_audio.py`, `test_epub.py`, and `test_integration.py`.
 - Step comment numbering in `build_m4b` corrected (was off-by-one after Step 1).
-- Various code-style compliance improvements: `from __future__ import annotations` added to
-  all modules; named constants for magic numbers; PIL image operations wrapped in `with`
-  statements; `Image.Resampling.LANCZOS` replaces deprecated `Image.LANCZOS`.
+- Various code-style compliance improvements: `from __future__ import annotations` added to all modules; named constants for magic numbers; PIL image operations wrapped in `with` statements; `Image.Resampling.LANCZOS` replaces deprecated `Image.LANCZOS`.
 
 ## [0.1.1] - 2025-12-01
 
@@ -159,29 +104,15 @@ Internal version bump. No functional changes; not published to PyPI.
 Initial release.
 
 ### Added
-- `scraper.py`: scrapes all available General Conference sessions from
-  `churchofjesuschrist.org`, including talk titles, speakers, MP3 URLs, transcripts,
-  speaker photos, and cover images. Respects `robots.txt` and rate-limits requests.
-- `downloader.py`: downloads MP3s, the conference cover image, and speaker photos with
-  resume support (skips files already the correct size), atomic `.tmp` → rename writes,
-  exponential retry backoff, and JPEG conversion for all images.
-- `audio.py`: converts MP3s to AAC, builds FFMETADATA1 chapter files with millisecond
-  offsets, concatenates and muxes into a chaptered `.m4b` audiobook with optional cover
-  art, and verifies the output with ffprobe.
-- `epub_builder.py`: builds an EPUB 3.0 companion with a cover page, copyright page,
-  navigable TOC, and per-talk chapters containing speaker photos, bylines, and full
-  sanitized transcripts. Output passes epubcheck with zero errors.
-- `ffmpeg_manager.py`: locates ffmpeg/ffprobe on `PATH`; falls back to `static-ffmpeg`
-  if not found; caches the result for the process lifetime.
-- `cli.py`: Click-based CLI with `--output`, `--conference`, `--audiobook-only`,
-  `--epub-only`, `--verbose`, `--overwrite`, `--bitrate`, and `--sample-rate` flags.
-  Includes disk-space warning, robots.txt check, resume behavior, and a Rich progress
-  display during downloads and conversion.
-- URL allowlist restricting all HTTP requests to `churchofjesuschrist.org` and
-  `*.ldscdn.org` domains.
+- `scraper.py`: scrapes all available General Conference sessions from `churchofjesuschrist.org`, including talk titles, speakers, MP3 URLs, transcripts, speaker photos, and cover images. Respects `robots.txt` and rate-limits requests.
+- `downloader.py`: downloads MP3s, the conference cover image, and speaker photos with resume support (skips files already the correct size), atomic `.tmp` -> rename writes, exponential retry backoff, and JPEG conversion for all images.
+- `audio.py`: converts MP3s to AAC, builds FFMETADATA1 chapter files with millisecond offsets, concatenates and muxes into a chaptered `.m4b` audiobook with optional cover art, and verifies the output with ffprobe.
+- `epub_builder.py`: builds an EPUB 3.0 companion with a cover page, copyright page, navigable TOC, and per-talk chapters containing speaker photos, bylines, and full sanitized transcripts. Output passes epubcheck with zero errors.
+- `ffmpeg_manager.py`: locates ffmpeg/ffprobe on `PATH`; falls back to `static-ffmpeg` if not found; caches the result for the process lifetime.
+- `cli.py`: Click-based CLI with `--output`, `--conference`, `--audiobook-only`, `--epub-only`, `--verbose`, `--overwrite`, `--bitrate`, and `--sample-rate` flags. Includes disk-space warning, robots.txt check, resume behavior, and a Rich progress display during downloads and conversion.
+- URL allowlist restricting all HTTP requests to `churchofjesuschrist.org` and `*.ldscdn.org` domains.
 - Filename sanitization preventing path traversal and special characters in output paths.
-- Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and
-  utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
+- Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
 [Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...HEAD
 [0.1.5]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.4...v0.1.5
