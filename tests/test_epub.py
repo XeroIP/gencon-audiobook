@@ -173,12 +173,51 @@ def test_sanitize_transcript_unwraps_scripture_ref_links() -> None:
     assert "Alma 5:12" in result, "Link text must be preserved"
 
 
-def test_sanitize_transcript_unwraps_note_ref_links() -> None:
-    """Footnote note-ref links must be unwrapped — superscript preserved, <a> removed."""
+def test_sanitize_transcript_noteref_link_preserved_with_epub_type() -> None:
+    """Internal footnote links (href=#note*) must be preserved as EPUB 3 noterefs.
+
+    The old behavior unwrapped all <a> tags. Now href='#note*' links survive
+    sanitization so e-readers can render the footnote as a popup.
+    """
     html = '<p>See this.<a class="note-ref" href="#note1"><sup class="marker">1</sup></a></p>'
     result = _sanitize_transcript(html)
-    assert "<a" not in result, f"<a> tag must be removed, got: {result!r}"
-    assert "<sup" in result, "Superscript must be preserved after unwrapping"
+    assert 'href="#note1"' in result, f"Footnote href must be preserved, got: {result!r}"
+    assert 'epub:type="noteref"' in result, f"epub:type noteref must be added, got: {result!r}"
+    assert "<sup" in result, "Superscript inside noteref must be preserved"
+
+
+def test_sanitize_transcript_non_note_links_still_unwrapped() -> None:
+    """Non-footnote <a> tags (scripture refs, cross-refs) must still be unwrapped."""
+    html = '<p>See <a href="https://www.churchofjesuschrist.org/scripture/1ne/1.1">1 Ne. 1:1</a>.</p>'
+    result = _sanitize_transcript(html)
+    assert "<a" not in result, f"External <a> must be unwrapped, got: {result!r}"
+    assert "1 Ne. 1:1" in result, "Link text must be preserved after unwrapping"
+
+
+def test_sanitize_transcript_footnote_body_wrapped_in_aside() -> None:
+    """Footnote body elements (id='note*') must be wrapped in <aside epub:type='footnote'>."""
+    html = '<p id="note1">This is the footnote text.</p>'
+    result = _sanitize_transcript(html)
+    assert '<aside epub:type="footnote" id="note1">' in result, (
+        f"Footnote body must be wrapped in <aside epub:type='footnote'>, got: {result!r}"
+    )
+    assert "This is the footnote text." in result, "Footnote text must be preserved"
+
+
+def test_sanitize_transcript_footnote_id_moves_to_aside() -> None:
+    """The id='note*' must be on the <aside>, not the inner element."""
+    html = '<p id="note1">Footnote.</p>'
+    result = _sanitize_transcript(html)
+    # The <p> must not carry the id (it moved to the aside)
+    assert "<p id=" not in result, f"id must move to <aside>, not stay on <p>, got: {result!r}"
+    assert '<aside epub:type="footnote" id="note1">' in result
+
+
+def test_sanitize_transcript_preserves_note_ids() -> None:
+    """id='note*' must be preserved (on the wrapping aside) for noteref links to resolve."""
+    html = '<p id="note1">Footnote text.</p>'
+    result = _sanitize_transcript(html)
+    assert 'id="note1"' in result, f"note id must be preserved on aside, got: {result!r}"
 
 
 def test_sanitize_transcript_strips_data_attributes() -> None:

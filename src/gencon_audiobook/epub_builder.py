@@ -122,6 +122,12 @@ nav ol {
 nav li {
   margin: 0.25em 0;
 }
+
+aside {
+  margin: 1.5em 0 0.5em;
+  padding-left: 1em;
+  font-size: 0.85em;
+}
 """
 
 
@@ -229,11 +235,34 @@ def _sanitize_transcript(
             ):
                 del tag.attrs[attr]
 
-    # Unwrap all <a> tags — scripture refs, footnote links, and cross-refs all
-    # point outside the EPUB container (RSC-033, RSC-026, RSC-007). Keeps display
-    # text and child elements (e.g., <sup> superscripts) inline.
+    # Preserve internal footnote links as EPUB 3 noterefs; unwrap everything else.
+    # Links whose href starts with "#note" connect superscript markers to footnote
+    # bodies on the same page. Adding epub:type="noteref" lets modern e-readers
+    # (Apple Books, Kobo, Thorium) display the footnote as a dismissible popup.
+    # All other <a> tags (scripture refs, cross-refs) point outside the EPUB
+    # container (RSC-033, RSC-026) and must be unwrapped.
     for a_tag in soup.find_all("a"):
-        a_tag.unwrap()
+        href = str(a_tag.get("href") or "")
+        if href.startswith("#note"):
+            # Strip all attrs except href; add EPUB 3 noteref semantics.
+            a_tag.attrs = {"href": href, "epub:type": "noteref"}
+        else:
+            a_tag.unwrap()
+
+    # Wrap footnote body elements in <aside epub:type="footnote">.
+    # The Church site uses id="note1", id="note2", etc. on <p> or <div> elements
+    # for the footnote content. Moving the id to the wrapping <aside> satisfies
+    # EPUB 3 structure: the noteref href="#note1" links to the aside, which the
+    # reader renders as a popup.
+    for tag in soup.find_all(
+        lambda t: isinstance(t.get("id"), str) and t["id"].startswith("note")
+    ):
+        note_id = str(tag["id"])
+        del tag["id"]
+        aside = soup.new_tag("aside")
+        aside["epub:type"] = "footnote"
+        aside["id"] = note_id
+        tag.wrap(aside)
 
     # Materialize data-value into text for elements that rely on CSS
     # content: attr(data-value) for display (e.g., footnote markers on the
