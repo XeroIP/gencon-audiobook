@@ -12,27 +12,34 @@ flowchart TD
         S3["Fetch conference listing"]
         S4["Parse Session / Talk stubs"]
         S5["Fetch each talk page"]
-        S6["Extract mp3_url, transcript_html,\nspeaker_image_url, speaker name"]
+        S6["Extract mp3_url, transcript_html,\nspeaker_image_url, inline_images, speaker name"]
         S1 --> S2 --> S3 --> S4 --> S5 --> S6
     end
 
-    SCRAPER --> MODELS
+    SCRAPER --> CACHE
+
+    subgraph CACHE["cache.py"]
+        C1["Save Conference to conference.json\n(after first scrape)"]
+        C2["Load from conference.json\n(subsequent runs — skip scraping)\n--force-scrape bypasses this"]
+    end
+
+    CACHE --> MODELS
 
     subgraph MODELS["models.py"]
         direction LR
         M1["Conference\ntitle, year, month,\nsessions, cover_image_url"]
         M2["Session\nname, number, talks"]
-        M3["Talk\ntitle, speaker, mp3_url,\ntranscript_html, speaker_image_url,\ntalk_index, session_name"]
-        M1 --- M2 --- M3
+        M3["Talk\ntitle, speaker, mp3_url,\ntranscript_html, speaker_image_url,\ninline_images, talk_index, session_name"]
+        M4["InlineImage\nurl, asset_id"]
+        M1 --- M2 --- M3 --- M4
     end
 
     MODELS --> DOWNLOADER
 
     subgraph DOWNLOADER["downloader.py"]
-        D1["Download MP3s\naudio/{index}-{title}.mp3"]
-        D2["Download cover\ncover.jpg"]
-        D3["Download speaker photos\nspeakers/{index}-{speaker}.jpg"]
-        D4["JPEG conversion applied to all images\nResume: skips files already at correct size"]
+        D1["Images (parallel, up to 8 threads)\nDownload cover → cover.jpg\nDownload photos → speakers/{index}-{speaker}.jpg\nDownload body imgs → inline/{index}-{asset_id}.jpg"]
+        D2["Audio (sequential, 0.5s delay)\nDownload MP3s → audio/{index}-{title}.mp3"]
+        D3["JPEG conversion via Pillow\nIIIF URLs rewritten to 800px\nResume: skips files already at correct size"]
     end
 
     DOWNLOADER --> AUDIO

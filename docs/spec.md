@@ -20,6 +20,7 @@ gencon-audiobook --epub-only              # Produce only the epub
 gencon-audiobook --output ~/Books         # Custom output directory
 gencon-audiobook --verbose                # Enable DEBUG-level console output
 gencon-audiobook --overwrite              # Overwrite existing output files
+gencon-audiobook --force-scrape           # Bypass conference.json cache, re-scrape from website
 ```
 
 ## Output Structure
@@ -29,12 +30,16 @@ gencon-audiobook --overwrite              # Overwrite existing output files
   April 2024 General Conference.m4b     # Complete audiobook with chapters
   April 2024 General Conference.epub    # Transcript companion
   cover.jpg                             # Conference cover image
+  conference.json                       # Cached conference metadata (skip re-scraping on rerun)
   audio/                                # Downloaded and converted audio
     001-sanitized-title.mp3             # Zero-padded talk_index, sanitized title
     001-sanitized-title.m4a             # Intermediate AAC (deleted after m4b is built)
     ...
   speakers/                             # Speaker photos (for reference and epub)
     001-speaker-name.jpg                # Zero-padded talk_index, sanitized speaker name
+    ...
+  inline/                               # Inline body images from talk transcripts
+    001-asset-id.jpg                    # Zero-padded talk_index, sanitized asset ID
     ...
   gencon-audiobook.log                  # Full DEBUG log for troubleshooting
 ```
@@ -76,23 +81,33 @@ churchofjesuschrist.org
         |
         v
   scraper.py  -------------------------------->  models.py
-  (html.parser, primary+fallback selectors)       Conference / Session / Talk
+  (html.parser, primary+fallback selectors)       Conference / Session / Talk / InlineImage
   (all conferences, user selects one)
         |
         v
+  cache.py  (conference.json)
+  (save after first scrape; load on subsequent runs to skip scraping)
+  (--force-scrape bypasses cache)
+        |
+        v
   downloader.py  ----------------------------->  output_dir/
-  (.tmp + rename, resume, retry/backoff)          |-- *.mp3
-  (JPEG conversion via Pillow)                    |-- cover.jpg
-                                                  +-- speakers/*.jpg
+  (images: parallel via ThreadPoolExecutor)       |-- audio/*.mp3
+  (audio: sequential, 0.5s delay)                 |-- cover.jpg
+  (.tmp + rename, resume, retry/backoff)          |-- speakers/*.jpg
+  (JPEG conversion via Pillow)                    +-- inline/*.jpg
+  (IIIF URLs rewritten to 800px resolution)
         |
         |---------------------------------------->  audio.py
-        |                                           (ffmpeg: MP3->AAC-LC 64k/44.1kHz/mono,
-        |                                            concat, FFMETADATA1 chapters, cover art)
+        |                                           (ffmpeg: MP3->AAC-LC, source-matched
+        |                                            bitrate/sample-rate, mono,
+        |                                            FFMETADATA1 chapters, cover art)
         |                                           -> Conference.m4b
         |
         +---------------------------------------->  epub_builder.py
                                                     (manual EPUB 3 ZIP of XHTML,
-                                                     theme-safe CSS, nested TOC by session)
+                                                     portrait cover, theme-safe CSS,
+                                                     session dividers, popup footnotes,
+                                                     inline body images, nested TOC)
                                                     -> Conference.epub
 ```
 
@@ -110,6 +125,12 @@ class ConferenceRef:
     month: int   # 4 for April, 10 for October
 
 @dataclass
+class InlineImage:
+    """A single inline body image referenced in a talk's transcript."""
+    url: str       # Full URL (IIIF, rewritten to 800px before download)
+    asset_id: str  # Unique identifier used as the filename component
+
+@dataclass
 class Talk:
     title: str
     speaker: str
@@ -117,6 +138,7 @@ class Talk:
     mp3_url: str | None = None
     transcript_html: str | None = None
     speaker_image_url: str | None = None
+    inline_images: list[InlineImage] = field(default_factory=list)  # body images from transcript
     session_name: str = ""
     session_number: int = 0   # 1-indexed
     talk_number: int = 0      # 1-indexed within the session
@@ -181,14 +203,16 @@ Dependencies intentionally NOT used:
 
 | Module | Responsibility |
 |---|---|
-| `models.py` | Dataclasses: Conference, Session, Talk |
+| `models.py` | Dataclasses: Conference, Session, Talk, InlineImage |
 | `utils.py` | `sanitize_filename()`, `validate_url()` (allowlist enforcement) |
 | `scraper.py` | Fetch all conference URLs, parse conference listing, parse talk pages, return Conference objects |
-| `downloader.py` | Download MP3s, cover, speaker photos with retry/backoff, .tmp+rename, resume |
+| `downloader.py` | Download MP3s, cover, speaker photos, and inline images; parallel image downloads via ThreadPoolExecutor |
+| `cache.py` | Serialize/deserialize Conference to/from conference.json; skip re-scraping on subsequent runs |
 | `ffmpeg_manager.py` | Locate ffmpeg and ffprobe (system PATH first, static-ffmpeg fallback) |
 | `audio.py` | Convert MP3->AAC, assemble m4b with FFMETADATA1 chapters and cover art |
-| `epub_builder.py` | Generate EPUB 3 manually as ZIP of XHTML with theme-safe CSS |
-| `cli.py` | Click CLI entry point, conference selection, disk space warning, error handling |
+| `epub_builder.py` | Generate EPUB 3 manually as ZIP of XHTML; portrait cover, session dividers, popup footnotes, inline images, theme-safe CSS |
+| `progress.py` | Custom Rich progress column: `TimeRemainingWithLabel` with "remaining" label and compact mode |
+| `cli.py` | Click CLI entry point, conference selection, cache load/save, disk space warning, error handling |
 | `__init__.py` | Package version string |
 | `__main__.py` | `python -m gencon_audiobook` support |
 

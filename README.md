@@ -51,11 +51,17 @@ gencon-audiobook --output ~/Books
 # Rebuild existing output files
 gencon-audiobook --overwrite
 
+# Re-scrape fresh data from the Church website (bypass local cache)
+gencon-audiobook --force-scrape
+
 # Reduce file size (lower bitrate and sample rate)
 gencon-audiobook --bitrate 32k --sample-rate 22050
 
 # Show detailed progress in the terminal
 gencon-audiobook --verbose
+
+# Add paragraph numbers to EPUB transcripts (useful for study groups and citations)
+gencon-audiobook --epub-paragraph-numbers
 ```
 
 For the full options reference, file size guide, and platform compatibility notes, see the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide).
@@ -70,12 +76,14 @@ For the full options reference, file size guide, and platform compatibility note
     April 2024 General Conference.m4b    # Chaptered audiobook
     April 2024 General Conference.epub   # Transcript companion
     cover.jpg                            # Conference cover image
+    conference.json                      # Cached conference metadata (skip re-scraping)
     audio/                               # Downloaded MP3 files
     speakers/                            # Speaker photos
+    inline/                              # Inline body images embedded in the EPUB
     gencon-audiobook.log                 # Full DEBUG log for troubleshooting
 ```
 
-Running the tool a second time skips files that already exist. Use `--overwrite` to rebuild.
+Running the tool a second time skips files that already exist and loads conference metadata from `conference.json` instead of re-scraping the Church website. Use `--overwrite` to rebuild output files. Use `--force-scrape` to bypass the metadata cache and fetch fresh data from the Church website.
 
 ---
 
@@ -111,11 +119,13 @@ pytest tests/test_integration.py -v -m integration
 src/gencon_audiobook/
   cli.py            Click entry point
   scraper.py        Fetch and parse conference listings and talk pages
-  downloader.py     Download MP3s, cover, and speaker photos
+  downloader.py     Download MP3s, cover, speaker photos, and inline images (parallel)
   audio.py          Convert MP3 to AAC, assemble chaptered m4b
   epub_builder.py   Build EPUB 3 ZIP from transcripts and images
   ffmpeg_manager.py Locate ffmpeg/ffprobe (PATH first, static-ffmpeg fallback)
-  models.py         Conference / Session / Talk dataclasses
+  cache.py          Save/load Conference metadata to conference.json (skip re-scraping)
+  models.py         Conference / Session / Talk / InlineImage dataclasses
+  progress.py       Custom Rich progress column (TimeRemainingWithLabel)
   utils.py          sanitize_filename(), validate_url()
 
 tests/
@@ -124,6 +134,7 @@ tests/
   test_downloader.py      Mocked HTTP tests
   test_audio.py           Audio pipeline with generated silent fixtures
   test_epub.py            EPUB structure and content validation
+  test_cache.py           Cache serialization and version compatibility
   test_cli.py             CLI behavior (all external calls mocked)
   test_utils.py           Filename sanitization and URL validation
   test_ffmpeg_manager.py  ffmpeg/ffprobe discovery and caching
