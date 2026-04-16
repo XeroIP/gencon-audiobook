@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-04-16
+
+### Added
+- `--epub-paragraph-numbers` flag: adds left-margin paragraph numbers to every talk transcript in the EPUB. Numbers restart at 1 per talk and are styled with `float: left` in a 2em gutter (CSS class `.para-num`). Each numbered paragraph also receives an `id="pN"` attribute for potential deep-linking. Paragraphs inside footnote `<aside>` elements are excluded. Off by default; useful for study groups and citations (e.g. "Elder Holland, paragraph 7").
+
+### Fixed
+- Documentation drift: README, `docs/spec.md`, `docs/scraper-pipeline.md`, and `CLAUDE.md` updated to reflect features added through v0.1.6 (`cache.py`, `progress.py`, `InlineImage`, `inline/` directory, `--force-scrape`, parallel image downloads).
+- Wiki Technical-Decisions §13 corrected: console log level is WARNING by default, not INFO.
+- Wiki updated with 6 new Technical-Decisions sections: conference metadata caching, parallel image downloads, EPUB 3 popup footnotes, portrait cover image, ZIP_STORED for JPEG entries, IIIF URL resolution upgrade.
+
 ## [0.1.6] - 2026-04-15
 
 ### Added
@@ -114,7 +124,9 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.2...v0.1.3
