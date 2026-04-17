@@ -622,24 +622,24 @@ def _sessions_from_html(html: str) -> list[Session]:
 
     Observed structure on the Church website (CSS-module class names may change):
 
-        outer_ul
-          <li>Contents link (no sub-ul, skip)</li>
-          <li>                                     <- session LI
-            <a class="sectionTitle-*">Saturday Morning Session</a>
-            inner_ul                               <- talks for this session
-              <li>
-                <a href="/study/general-conference/YYYY/MM/talk-id">
-                  <div class="itemTitle-*">
-                    <p>Talk Title</p>
-                    <p class="subtitle-*">Speaker Name</p>
-                  </div>
-                </a>
-              </li>
-              ...
-          </li>
-          ...
+        <li>                                     <- session LI
+          <a class="sectionTitle-*">Saturday Morning Session</a>
+          <ul>                                   <- talks for this session
+            <li>
+              <a href="/study/general-conference/YYYY/MM/talk-id">
+                <div class="itemTitle-*">
+                  <p>Talk Title</p>
+                  <p class="subtitle-*">Speaker Name</p>
+                </div>
+              </a>
+            </li>
+            ...
+          </ul>
+        </li>
 
-    Navigate to the outer UL by walking up from the first talk link.
+    Session <li> elements are identified by having a direct-child <ul> that contains
+    at least one conference link. This approach works across conference eras without
+    needing to bootstrap a walk from a specific link position.
     """
     soup = BeautifulSoup(html, "html.parser")
 
@@ -647,21 +647,26 @@ def _sessions_from_html(html: str) -> list[Session]:
     if not conf_links:
         return []
 
-    # Walk up: conf_a -> talk_li -> inner_ul -> session_li -> outer_ul
-    inner_ul = conf_links[0].find_parent("ul")
-    if not inner_ul:
-        return []
-    session_li = inner_ul.parent
-    outer_ul = session_li.parent if session_li and session_li.name == "li" else None
+    # Find session <li> elements directly: a <li> is a session if it has a
+    # direct-child <ul> that contains at least one conference link.
+    # Bootstrapping from conf_links[0] fails for older conferences where the
+    # first link in document order is a session landing page (in the outer UL),
+    # not a talk (in the inner UL).
+    session_lis: list[Tag] = []
+    for li in soup.find_all("li"):
+        if not isinstance(li, Tag):
+            continue
+        sub_ul = li.find("ul", recursive=False)
+        if isinstance(sub_ul, Tag) and sub_ul.find("a", href=_CONF_URL_RE):
+            session_lis.append(li)
 
     sessions: list[Session] = []
     session_number = 0
 
-    if outer_ul and outer_ul.name in ("ul", "ol"):
-        for li in outer_ul.find_all("li", recursive=False):
-            sub_ul = li.find("ul")
-            if not sub_ul:
-                # "Contents" or other non-session entry — skip
+    if session_lis:
+        for li in session_lis:
+            sub_ul = li.find("ul", recursive=False)
+            if not isinstance(sub_ul, Tag):
                 continue
 
             # Session name: direct-child <a> of the session <li> (the session heading link).
@@ -980,7 +985,7 @@ def scrape_conference(conference_url: str) -> Conference:
                     missing.append("mp3_url")
 
                 if missing:
-                    logger.error(
+                    logger.warning(
                         "Talk at %s missing required fields: %s — skipping",
                         talk.talk_url,
                         ", ".join(missing),

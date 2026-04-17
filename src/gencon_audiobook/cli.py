@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 import click
-from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -22,6 +21,7 @@ from .downloader import DownloadError, DownloadResult, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
 from .models import Talk
+from .progress import shared_console
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
 logger = logging.getLogger(__name__)
@@ -30,8 +30,10 @@ _LOG_FILENAME = "gencon-audiobook.log"
 _MIN_PYTHON = (3, 10)
 _DISK_WARN_MB = 500
 
-# Module-level console so helpers can print without threading a Console argument.
-console = Console()
+# Use the shared console from progress.py so RichHandler and all Progress bars
+# write through the same Console — Rich then interleaves log messages correctly
+# above the live progress bar instead of clobbering the same terminal line.
+console = shared_console
 
 _CONF_BASE = "https://www.churchofjesuschrist.org/study/general-conference"
 _CONFERENCE_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
@@ -158,7 +160,7 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 
     # No filter — fetch listing, default to most recent.
     try:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as sp:
             sp.add_task("Fetching available conferences...")
             refs = fetch_available_conferences()
     except ScraperError as exc:
@@ -475,6 +477,7 @@ def _run(
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
+                    console=console,
                 ) as sp:
                     sp.add_task(f"Building EPUB: {conf_obj.title}")
                     build_epub(
