@@ -110,7 +110,8 @@ def _ffmeta_escape(value: str) -> str:
     return value
 
 
-_SUBPROCESS_TIMEOUT = 600   # 10 minutes — generous for large conference builds
+_SUBPROCESS_TIMEOUT = 600   # 10 minutes — for concat/mux of full conference
+_CONVERT_TIMEOUT = 120      # 2 minutes — per-file AAC conversion
 _FALLBACK_BITRATE = "64k"   # used when ffprobe quality probe fails
 _FALLBACK_SAMPLE_RATE = 44100  # used when ffprobe quality probe fails
 
@@ -163,7 +164,11 @@ def _run_ffmpeg_with_progress(
 
     The command must already include `-progress pipe:1 -nostats` so ffmpeg writes
     key=value progress lines to stdout. A watchdog timer kills the process if it
-    exceeds _SUBPROCESS_TIMEOUT seconds without finishing.
+    exceeds _CONVERT_TIMEOUT seconds without finishing.
+
+    stderr is drained in a background thread to prevent pipe deadlock: if ffmpeg
+    writes more than the OS pipe buffer (4KB on Windows) to stderr while Python
+    is blocked reading stdout, both processes stall indefinitely.
 
     Args:
         cmd: Complete ffmpeg command including -progress pipe:1 -nostats flags.
@@ -185,6 +190,17 @@ def _run_ffmpeg_with_progress(
         errors="replace",
     )
 
+    # Drain stderr in a background thread to prevent pipe buffer deadlock.
+    stderr_lines: list[str] = []
+
+    def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            stderr_lines.append(line)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     killed_by_watchdog = False
 
     def _watchdog() -> None:
@@ -193,7 +209,7 @@ def _run_ffmpeg_with_progress(
             killed_by_watchdog = True
             proc.kill()
 
-    timer = threading.Timer(_SUBPROCESS_TIMEOUT, _watchdog)
+    timer = threading.Timer(_CONVERT_TIMEOUT, _watchdog)
     timer.start()
     try:
         assert proc.stdout is not None  # guaranteed by stdout=PIPE
@@ -212,17 +228,16 @@ def _run_ffmpeg_with_progress(
         timer.cancel()
 
     proc.wait()
+    stderr_thread.join(timeout=5)
 
     if killed_by_watchdog:
         raise AudioError(
-            f"{label} timed out after {_SUBPROCESS_TIMEOUT}s. "
-            "The ffmpeg process was killed. Try with fewer talks or check for corrupt MP3 files."
+            f"{label} timed out after {_CONVERT_TIMEOUT}s. "
+            "The ffmpeg process was killed. Check for corrupt or unsupported MP3 files."
         )
 
     if proc.returncode != 0:
-        stderr = ""
-        if proc.stderr:
-            stderr = proc.stderr.read()
+        stderr = "".join(stderr_lines)
         raise AudioError(
             f"{label} failed (exit {proc.returncode}).\n"
             f"Command: {' '.join(cmd)}\n"

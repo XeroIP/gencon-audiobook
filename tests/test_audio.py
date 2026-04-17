@@ -534,8 +534,7 @@ def test_run_ffmpeg_with_progress_parses_out_time() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter(stdout_lines)
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = ""
+    mock_proc.stderr = iter([])  # iterable — drained by stderr thread
     mock_proc.returncode = 0
     mock_proc.poll.return_value = 0
 
@@ -564,8 +563,7 @@ def test_run_ffmpeg_with_progress_nonzero_exit() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter(["progress=end\n"])
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = "some ffmpeg error"
+    mock_proc.stderr = iter(["some ffmpeg error\n"])  # iterable — drained by stderr thread
     mock_proc.returncode = 1
     mock_proc.poll.return_value = 1
 
@@ -587,8 +585,7 @@ def test_run_ffmpeg_with_progress_watchdog_kills_hung_process() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter([])  # EOF immediately so the readline loop exits
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = ""
+    mock_proc.stderr = iter([])  # iterable — drained by stderr thread
     mock_proc.returncode = -9
     mock_proc.poll.return_value = None  # process appears still running when watchdog fires
 
@@ -613,3 +610,32 @@ def test_run_ffmpeg_with_progress_watchdog_kills_hung_process() -> None:
                 progress=progress,
                 task_id=0,  # type: ignore[arg-type]
             )
+
+
+def test_run_ffmpeg_with_progress_noisy_stderr_does_not_deadlock() -> None:
+    """ffmpeg writing large amounts of stderr should not deadlock.
+
+    Previously, stderr was piped but never read, causing the OS pipe buffer
+    (4KB on Windows) to fill and deadlock both processes.
+    """
+    from unittest.mock import MagicMock, patch
+
+    # Simulate lots of stderr output (well beyond OS pipe buffer)
+    noisy_stderr = ["WARNING: something suspicious\n"] * 500
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(["out_time_us=1000000\n", "progress=end\n"])
+    mock_proc.stderr = iter(noisy_stderr)
+    mock_proc.returncode = 0
+    mock_proc.poll.return_value = 0
+
+    progress = MagicMock()
+    with patch("subprocess.Popen", return_value=mock_proc):
+        # Should complete without hanging
+        _run_ffmpeg_with_progress(
+            ["ffmpeg", "-i", "in.mp3", "out.m4a"],
+            label="test",
+            source_duration_s=5.0,
+            progress=progress,
+            task_id=0,  # type: ignore[arg-type]
+        )
