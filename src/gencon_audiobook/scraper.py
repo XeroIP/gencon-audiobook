@@ -556,7 +556,13 @@ def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
             continue
         raw_sections = value.get("sections", [])
         for i, section in enumerate(raw_sections, start=1):
-            name = section.get("title", f"Session {i}")
+            name = section.get("title")
+            if not name:
+                # Older conferences have unnamed duplicate sections that repeat
+                # every talk from a named session plus a session landing page.
+                # Skip them — real sessions always have titles in the JSON.
+                logger.debug("Skipping unnamed JSON section %d (likely duplicate)", i)
+                continue
             talks: list[Talk] = []
             for entry in section.get("entries", []):
                 uri = entry.get("uri", "")
