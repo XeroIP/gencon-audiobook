@@ -538,9 +538,17 @@ def parse_conference_listing(html: str) -> list[Session]:
 
 
 def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
-    """Extract sessions from __INITIAL_STATE__ for the conference listing page."""
+    """Extract sessions from __INITIAL_STATE__ for the conference listing page.
+
+    Older conferences (pre-2020) have duplicate sections in the JSON: the real
+    sessions appear first, then a second set of unnamed sections that repeat the
+    same talks with a session landing page prepended. We deduplicate by tracking
+    seen talk URLs — any entry whose URL was already claimed by an earlier session
+    is skipped, and sections that produce zero new talks are dropped entirely.
+    """
     library = state.get("library", {})
     sessions: list[Session] = []
+    seen_urls: set[str] = set()
 
     # Find the library key that matches a conference listing URL
     for key, value in library.items():
@@ -555,10 +563,13 @@ def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
                 # Skip entries that don't look like conference sub-pages
                 if not _CONF_URL_RE.search(uri):
                     continue
+                talk_url = urljoin(_BASE_URL, uri.split("?")[0])
+                if talk_url in seen_urls:
+                    continue
                 title = entry.get("title", "")
                 speaker = entry.get("subtitle", "") or entry.get("author", "")
-                talk_url = urljoin(_BASE_URL, uri.split("?")[0])
                 if title:
+                    seen_urls.add(talk_url)
                     talks.append(Talk(title=title, speaker=speaker, talk_url=talk_url))
             if talks:
                 sessions.append(Session(name=name, number=i, talks=talks))
