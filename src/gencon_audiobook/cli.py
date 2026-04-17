@@ -16,7 +16,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from . import __version__
 from .audio import AudioError, BuildStats, build_m4b
 from .cache import CACHE_FILENAME, load_cache, save_cache
-from .downloader import DownloadError, download_conference
+from .downloader import DownloadError, DownloadResult, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
 from .models import Talk
@@ -407,16 +407,18 @@ def _run(
     _check_disk_space(conf_output_dir)
 
     # Download audio (skipped for --epub-only) and images.
-    console.print(f"Downloading files for {len(conf_obj.talks)} talks...")
+    # download_conference() prints its own contextual message and skips silently
+    # if all files are already present.
     t0 = time.monotonic()
     try:
-        failed_talks: list[Talk] = download_conference(
+        dl_result: DownloadResult = download_conference(
             conf_obj, conf_output_dir, skip_audio=epub_only
         )
     except DownloadError as exc:
         click.echo(f"Error: Download failed: {exc}", err=True)
         sys.exit(1)
     phase_times["download"] = time.monotonic() - t0
+    failed_talks = dl_result.failed_talks
 
     m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
     epub_path = conf_output_dir / f"{conf_obj.title}.epub"

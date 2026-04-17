@@ -12,7 +12,7 @@ high contrast, accessibility modes). This is achieved by deferring ALL visual st
 - `color` (including `currentColor` in color properties)
 - `background-color`
 - `font-family`
-- Absolute font sizes: `px`, `pt`, `cm`, `mm`, `in`, `pc`
+- `font-size` (any unit — `px`, `pt`, `em`, `%`, `rem`, `vw`, etc. — defer text sizing to the reader)
 
 **Only allowed:**
 - Structural layout: `margin`, `padding`, `text-align`, `line-height` in `em` or `%`
