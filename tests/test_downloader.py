@@ -12,6 +12,7 @@ from PIL import Image
 
 from gencon_audiobook.downloader import (
     DownloadError,
+    DownloadResult,
     _audio_path,
     _speaker_path,
     cleanup_tmp_files,
@@ -61,8 +62,9 @@ def test_download_file_success(tmp_path: Path) -> None:
     rsps_lib.add(rsps_lib.GET, _ALLOWED_URL, body=content, status=200)
 
     dest = tmp_path / "audio" / "001-test.mp3"
-    download_file(_ALLOWED_URL, dest, _make_session())
+    result = download_file(_ALLOWED_URL, dest, _make_session())
 
+    assert result is True, "download_file should return True when file is downloaded"
     assert dest.exists(), "Destination file should exist after download"
     assert dest.read_bytes() == content, "Destination content should match server response"
     assert not dest.with_suffix(dest.suffix + ".tmp").exists(), ".tmp file should be cleaned up"
@@ -91,8 +93,9 @@ def test_download_file_skips_existing(tmp_path: Path) -> None:
     dest = tmp_path / "001-test.mp3"
     dest.write_bytes(content)  # pre-existing correct file
 
-    download_file(_ALLOWED_URL, dest, _make_session())
+    result = download_file(_ALLOWED_URL, dest, _make_session())
 
+    assert result is False, "download_file should return False when file is skipped"
     get_calls = [c for c in rsps_lib.calls if c.request.method == "GET"]
     assert len(get_calls) == 0, "GET should not be issued when file is already complete"
 
@@ -335,6 +338,43 @@ def test_download_conference_audio_downloaded_by_default(tmp_path: Path) -> None
     mp3 = tmp_path / "audio" / "001-Test-Talk.mp3"
     assert mp3.exists(), \
         f"MP3 should be downloaded by default (skip_audio=False); expected {mp3}"
+
+
+@rsps_lib.activate
+def test_download_conference_returns_download_result(tmp_path: Path) -> None:
+    """download_conference() returns a DownloadResult with accurate counts."""
+    rsps_lib.add(rsps_lib.GET, _COVER_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _PHOTO_URL, body=_jpeg_bytes(), status=200)
+    rsps_lib.add(rsps_lib.GET, _MP3_URL, body=_small_mp3(), status=200)
+
+    conference = _make_single_talk_conference()
+    result = download_conference(conference, tmp_path, delay=0, skip_audio=False)
+
+    assert isinstance(result, DownloadResult), "download_conference must return a DownloadResult"
+    assert result.failed_talks == [], "No talks should fail when all downloads succeed"
+    assert result.downloaded == 3, f"Expected 3 downloaded, got {result.downloaded}"
+    assert result.skipped == 0, f"Expected 0 skipped, got {result.skipped}"
+
+
+@rsps_lib.activate
+def test_download_conference_skips_silently_when_all_exist(tmp_path: Path) -> None:
+    """When all destination files already exist, no HTTP requests are made and no progress bar shown."""
+    conference = _make_single_talk_conference()
+
+    # Pre-create all destination files so the pre-scan short-circuits
+    (tmp_path / "cover.jpg").write_bytes(_jpeg_bytes())
+    (tmp_path / "speakers").mkdir()
+    (tmp_path / "speakers" / "001-Test-Speaker.jpg").write_bytes(_jpeg_bytes())
+    (tmp_path / "audio").mkdir()
+    (tmp_path / "audio" / "001-Test-Talk.mp3").write_bytes(_small_mp3())
+
+    result = download_conference(conference, tmp_path, delay=0, skip_audio=False)
+
+    assert result.downloaded == 0, "No files should be downloaded when all already exist"
+    assert result.skipped == 3, f"Expected 3 skipped, got {result.skipped}"
+    assert result.failed_talks == [], "No talks should fail on a fully-cached run"
+    # No HTTP calls — the pre-scan returns early before touching the network
+    assert len(rsps_lib.calls) == 0, "No HTTP requests should be made when all files exist"
 
 
 @rsps_lib.activate
