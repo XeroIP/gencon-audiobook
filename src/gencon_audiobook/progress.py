@@ -1,8 +1,17 @@
-"""Shared Rich progress column customizations."""
+"""Shared Rich progress column customizations and progress bar factory."""
 
 from __future__ import annotations
 
-from rich.progress import MofNCompleteColumn, Task, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    Task,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 from rich.text import Text
 
 
@@ -30,3 +39,21 @@ class ConditionalMofNColumn(MofNCompleteColumn):
             # Width matches f"{completed:{total_width}d}/{total}": 2*total_width + 1
             return Text(" " * (2 * total_width + 1))
         return super().render(task)
+
+
+def standard_progress() -> Progress:
+    """Return a Progress bar with the standard project column layout.
+
+    All full-width progress bars (scrape, download, convert) use this factory
+    so their columns are identical and visually aligned.
+
+    Column order: spinner | N/M count | bar | percent | time remaining | description
+    """
+    return Progress(
+        SpinnerColumn(),
+        ConditionalMofNColumn(),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingWithLabel(compact=True),
+        TextColumn("[progress.description]{task.description}"),
+    )

@@ -12,17 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mutagen.mp4 import MP4
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TaskProgressColumn,
-    TextColumn,
-)
+from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
 
 from .models import Conference, Talk
-from .progress import ConditionalMofNColumn, TimeRemainingWithLabel
+from .progress import standard_progress
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -659,14 +652,7 @@ def build_m4b(
 
     # Step 2: Convert MP3 → AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
-    conv_progress = Progress(
-        SpinnerColumn(),
-        ConditionalMofNColumn(),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingWithLabel(compact=True),
-        TextColumn("[progress.description]{task.description}"),
-    )
+    conv_progress = standard_progress()
     with conv_progress:
         outer_task = conv_progress.add_task("Converting to AAC", total=len(talks))
         inner_task = conv_progress.add_task("", total=1.0, visible=False, show_count=False)
