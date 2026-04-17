@@ -660,6 +660,14 @@ def _sessions_from_html(html: str) -> list[Session]:
         if isinstance(sub_ul, Tag) and sub_ul.find("a", href=_CONF_URL_RE):
             session_lis.append(li)
 
+    # Track session LIs by object identity so we can skip nested ones when
+    # iterating talks. Older conferences have 3-level nesting: an outer grouping
+    # <li> whose sub-<ul> contains session <li>s, each of which has a sub-<ul>
+    # of actual talks. Without this guard, the outer grouping treats each inner
+    # session <li>'s heading link as a "talk", producing bogus Talk objects for
+    # session landing pages.
+    session_li_ids: set[int] = {id(li) for li in session_lis}
+
     sessions: list[Session] = []
     session_number = 0
 
@@ -685,6 +693,9 @@ def _sessions_from_html(html: str) -> list[Session]:
 
             talks: list[Talk] = []
             for talk_li in sub_ul.find_all("li", recursive=False):
+                # Skip nested session LIs — they are processed in their own iteration.
+                if id(talk_li) in session_li_ids:
+                    continue
                 talk_a = talk_li.find("a", href=_CONF_URL_RE)
                 if not talk_a:
                     continue
