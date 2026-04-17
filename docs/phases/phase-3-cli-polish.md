@@ -189,8 +189,8 @@ Handle gracefully (no traceback):
 - **Conference already downloaded**: If output files already exist and `--overwrite` is not set,
   print a message and exit with code 0. Never prompt interactively — the tool must be
   scriptable. `--overwrite` was declared in Phase 1 and is wired up here.
-- **Conference selection**: If `--conference` value doesn't match any available conference,
-  print the list of available conferences and exit with a helpful message
+- **Conference selection**: If `--conference` value is not in YYYY-MM format,
+  print a clear error and exit with a helpful message
 
 ---
 
@@ -220,9 +220,9 @@ ls -la ./test_output/<conference>/gencon-audiobook.log
 gencon-audiobook --output ./test_output  # second run
 # Expected: "Output files already exist. Use --overwrite to replace them."
 
-# 6. Invalid conference name
-gencon-audiobook --conference "Fake Conference 9999"
-# Expected: lists available conferences, clean error message
+# 6. Invalid conference format
+gencon-audiobook --conference "April 2024"
+# Expected: "Invalid conference format" error message, exit non-zero
 
 # 7. Disk space warning
 # (Hard to test without filling disk — verify the logic in code review)

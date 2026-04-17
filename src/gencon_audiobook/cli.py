@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import calendar
 import logging
+import re
 import shutil
 import sys
 import time
@@ -30,6 +32,9 @@ _DISK_WARN_MB = 500
 
 # Module-level console so helpers can print without threading a Console argument.
 console = Console()
+
+_CONF_BASE = "https://www.churchofjesuschrist.org/study/general-conference"
+_CONFERENCE_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 
 
 # ---------------------------------------------------------------------------
@@ -124,18 +129,34 @@ def _check_disk_space(path: Path) -> None:
 def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     """Resolve the conference to download.
 
-    If conference_filter is given, find the first match (case-insensitive).
-    Otherwise print a numbered menu and default to the most recent.
+    If conference_filter is given as YYYY-MM, construct the URL directly — no
+    listing fetch needed. Otherwise fetch the listing and default to the most recent.
 
     Args:
-        conference_filter: Partial conference name to match, or None.
+        conference_filter: Conference date as YYYY-MM (e.g., '2024-04'), or None.
 
     Returns:
         (title, url) of the selected conference.
 
     Raises:
-        SystemExit: if the filter matches nothing or the list cannot be fetched.
+        SystemExit: if the format is invalid or the listing cannot be fetched.
     """
+    if conference_filter:
+        m = _CONFERENCE_RE.match(conference_filter)
+        if not m:
+            click.echo(
+                f"Error: Invalid conference format {conference_filter!r}.\n"
+                "Expected YYYY-MM (e.g., '2024-04' or '1999-10').",
+                err=True,
+            )
+            sys.exit(1)
+        year, month = int(m.group(1)), int(m.group(2))
+        title = f"{calendar.month_name[month]} {year} General Conference"
+        url = f"{_CONF_BASE}/{year}/{month:02d}"
+        console.print(f"Selected: {title}")
+        return title, url
+
+    # No filter — fetch listing, default to most recent.
     try:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
             sp.add_task("Fetching available conferences...")
@@ -152,23 +173,6 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         )
         sys.exit(1)
 
-    if conference_filter:
-        needle = conference_filter.lower()
-        matches = [r for r in refs if needle in r.title.lower()]
-        if not matches:
-            click.echo(
-                f"Error: No conference matching {conference_filter!r}.\n\n"
-                "Available conferences:",
-                err=True,
-            )
-            for i, r in enumerate(refs[:10], 1):
-                click.echo(f"  {i}. {r.title}", err=True)
-            sys.exit(1)
-        selected = matches[0]
-        console.print(f"Selected: {selected.title}")
-        return selected.title, selected.url
-
-    # Default: most recent (first in list)
     console.print(f"Found {len(refs)} conferences. Using: {refs[0].title}")
     return refs[0].title, refs[0].url
 
@@ -188,7 +192,7 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 @click.option(
     "--conference",
     default=None,
-    help="Conference to download (e.g., 'April 2024'). Defaults to most recent.",
+    help="Conference date as YYYY-MM (e.g., '2024-04'). Defaults to most recent.",
 )
 @click.option(
     "--audiobook-only",

@@ -50,7 +50,7 @@ contribute.
 6. **Usage**
    ```bash
    gencon-audiobook                               # Most recent conference
-   gencon-audiobook --conference "April 2024"     # Specific conference
+   gencon-audiobook --conference 2024-04          # Specific conference
    gencon-audiobook --audiobook-only              # m4b only
    gencon-audiobook --epub-only                   # epub only
    gencon-audiobook --output ~/Books              # Custom output directory

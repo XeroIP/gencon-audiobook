@@ -14,7 +14,7 @@ and speaker photos.
 pip install gencon-audiobook
 
 gencon-audiobook                          # List available conferences, default to most recent
-gencon-audiobook --conference "April 2024"  # Select a specific conference
+gencon-audiobook --conference 2024-04       # Select a specific conference
 gencon-audiobook --audiobook-only         # Produce only the m4b
 gencon-audiobook --epub-only              # Produce only the epub
 gencon-audiobook --output ~/Books         # Custom output directory
