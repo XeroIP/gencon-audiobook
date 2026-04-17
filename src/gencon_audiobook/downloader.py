@@ -12,17 +12,8 @@ from typing import cast
 
 import requests
 from PIL import Image
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
-
 from .models import Conference, Talk
-from .progress import TimeRemainingWithLabel
+from .progress import standard_progress
 from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
@@ -316,14 +307,7 @@ def download_conference(
         len(image_queue),
     )
 
-    overall_progress = Progress(
-        SpinnerColumn(),
-        MofNCompleteColumn(),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingWithLabel(compact=True),
-        TextColumn("[progress.description]{task.description}"),
-    )
+    overall_progress = standard_progress()
 
     failed: list[str] = []
     failed_talks: list[Talk] = []

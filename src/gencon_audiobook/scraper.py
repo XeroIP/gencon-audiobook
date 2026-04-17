@@ -15,17 +15,9 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup, Tag
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 
 from .models import Conference, InlineImage, Session, Talk
-from .progress import TimeRemainingWithLabel
+from .progress import standard_progress
 from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
@@ -953,14 +945,7 @@ def scrape_conference(conference_url: str) -> Conference:
     skipped: list[Talk] = []
 
     console.print(f"Scraping: {title}")
-    scrape_progress = Progress(
-        SpinnerColumn(),
-        MofNCompleteColumn(),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingWithLabel(compact=True),
-        TextColumn("[progress.description]{task.description}"),
-    )
+    scrape_progress = standard_progress()
     with scrape_progress:
         task = scrape_progress.add_task("Scraping talks", total=len(all_talks))
         for i, talk in enumerate(all_talks, start=1):
