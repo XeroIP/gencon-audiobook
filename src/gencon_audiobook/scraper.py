@@ -68,12 +68,14 @@ def _upgrade_iiif(url: str) -> str:
     url = re.sub(r"/full/!\d+,/", "/full/!800,/", url)
     return url
 
-# Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL).
-# Modern talk slugs use a numeric-prefix + speaker-name format with no hyphens
-# (e.g., "11oaks", "12christofferson"). Session-level links DO contain hyphens
-# (e.g., "saturday-morning-session") and must be excluded — [a-z0-9]+ achieves
-# this. Verified against fixture data; the weekly live test monitors for changes.
-_TALK_URL_RE = re.compile(r"/study/general-conference/\d{4}/\d{2}/[a-z0-9]+(?:\?|$)", re.IGNORECASE)
+# Matches any /study/general-conference/YYYY/MM/slug URL — talk and session links
+# alike. The character class [a-z0-9][-a-z0-9]* covers modern unhyphenated slugs
+# ("11oaks") and older hyphenated ones ("the-work-moves-forward"). Talk vs.
+# session is determined by DOM position in _sessions_from_html, not URL pattern.
+_CONF_URL_RE = re.compile(
+    r"/study/general-conference/\d{4}/\d{2}/[a-z0-9][-a-z0-9]*(?:\?|$)",
+    re.IGNORECASE,
+)
 
 
 # Cache of parsed RobotFileParser objects, keyed by scheme+host (e.g. "https://www.churchofjesuschrist.org")
@@ -558,8 +560,8 @@ def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
             talks: list[Talk] = []
             for entry in section.get("entries", []):
                 uri = entry.get("uri", "")
-                # Skip non-talk entries (e.g., session-level links)
-                if not _TALK_URL_RE.search(uri):
+                # Skip entries that don't look like conference sub-pages
+                if not _CONF_URL_RE.search(uri):
                     continue
                 title = entry.get("title", "")
                 speaker = entry.get("subtitle", "") or entry.get("author", "")
@@ -649,12 +651,12 @@ def _sessions_from_html(html: str) -> list[Session]:
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    talk_links = soup.find_all("a", href=_TALK_URL_RE)
-    if not talk_links:
+    conf_links = soup.find_all("a", href=_CONF_URL_RE)
+    if not conf_links:
         return []
 
-    # Walk up: talk_a -> talk_li -> inner_ul -> session_li -> outer_ul
-    inner_ul = talk_links[0].find_parent("ul")
+    # Walk up: conf_a -> talk_li -> inner_ul -> session_li -> outer_ul
+    inner_ul = conf_links[0].find_parent("ul")
     if not inner_ul:
         return []
     session_li = inner_ul.parent
@@ -670,19 +672,23 @@ def _sessions_from_html(html: str) -> list[Session]:
                 # "Contents" or other non-session entry — skip
                 continue
 
-            # Session name: first <a> that is NOT a talk link
+            # Session name: direct-child <a> of the session <li> (the session heading link).
+            # URL matching is not used — all conf URLs look alike; DOM position distinguishes
+            # session <li> from talk <li>. Fall back to <h4> for older HTML that uses headings.
             session_name: str | None = None
             for a in li.find_all("a", recursive=False):
-                if not _TALK_URL_RE.search(a.get("href", "")):
-                    session_name = a.get_text(strip=True)
-                    break
-
+                session_name = a.get_text(strip=True)
+                break
+            if not session_name:
+                h4 = li.find("h4", recursive=False)
+                if isinstance(h4, Tag):
+                    session_name = h4.get_text(strip=True)
             if not session_name:
                 session_name = f"Session {session_number + 1}"
 
             talks: list[Talk] = []
             for talk_li in sub_ul.find_all("li", recursive=False):
-                talk_a = talk_li.find("a", href=_TALK_URL_RE)
+                talk_a = talk_li.find("a", href=_CONF_URL_RE)
                 if not talk_a:
                     continue
                 title = _extract_talk_title(talk_a)
@@ -699,7 +705,7 @@ def _sessions_from_html(html: str) -> list[Session]:
     if not sessions:
         logger.warning("No session structure detected; grouping all talks under one session")
         all_talks: list[Talk] = []
-        for a in talk_links:
+        for a in conf_links:
             title = _extract_talk_title(a)
             speaker = _extract_talk_speaker(a)
             if title:

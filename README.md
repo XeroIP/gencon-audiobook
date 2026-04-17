@@ -37,7 +37,7 @@ New to the terminal or Python? See the [User Guide](https://github.com/XeroIP/ge
 gencon-audiobook
 
 # Select a specific conference
-gencon-audiobook --conference "April 2024"
+gencon-audiobook --conference 2024-04
 
 # Audiobook only (skip epub)
 gencon-audiobook --audiobook-only

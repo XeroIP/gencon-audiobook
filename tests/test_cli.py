@@ -163,14 +163,11 @@ def test_defaults_to_most_recent_conference(tmp_path: Path) -> None:
 
 
 def test_conference_filter_selects_matching(tmp_path: Path) -> None:
-    refs = [
-        _make_ref("April 2024 General Conference", 2024, 4),
-        _make_ref("October 2023 General Conference", 2023, 10),
-    ]
+    """YYYY-MM format constructs the URL directly without fetching the listing."""
     conference = _make_conference("October 2023 General Conference")
 
     with (
-        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.fetch_available_conferences") as mock_listing,
         patch("gencon_audiobook.cli.scrape_conference", return_value=conference) as mock_scrape,
         patch("gencon_audiobook.cli.download_conference"),
         patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
@@ -179,24 +176,53 @@ def test_conference_filter_selects_matching(tmp_path: Path) -> None:
     ):
         runner = CliRunner()
         result = runner.invoke(
-            main, ["--output", str(tmp_path), "--audiobook-only", "--conference", "October 2023"]
+            main, ["--output", str(tmp_path), "--audiobook-only", "--conference", "2023-10"]
         )
 
     assert result.exit_code == 0, result.output
+    mock_listing.assert_not_called()
     called_url = mock_scrape.call_args[0][0]
-    assert "2023/10" in called_url
+    assert "2023/10" in called_url, f"Expected 2023/10 in URL, got: {called_url}"
 
 
 def test_conference_filter_no_match_exits_nonzero(tmp_path: Path) -> None:
-    refs = [_make_ref("April 2024 General Conference")]
-
-    with patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs):
-        runner = CliRunner()
-        result = runner.invoke(
-            main, ["--output", str(tmp_path), "--conference", "Nonexistent 1800"]
-        )
+    """Invalid YYYY-MM format exits with a non-zero code."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["--output", str(tmp_path), "--conference", "Nonexistent 1800"]
+    )
 
     assert result.exit_code != 0
+
+
+def test_conference_filter_invalid_format_exits_nonzero(tmp_path: Path) -> None:
+    """Month-first or free-text format is rejected with a clear error."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["--output", str(tmp_path), "--conference", "april-2024"]
+    )
+
+    assert result.exit_code != 0
+    assert "Invalid conference format" in result.output, result.output
+
+
+def test_conference_direct_url_skips_listing_fetch(tmp_path: Path) -> None:
+    """When --conference YYYY-MM is given, fetch_available_conferences is never called."""
+    conference = _make_conference("April 2024 General Conference")
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences") as mock_listing,
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2024-04"]
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_listing.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -485,28 +511,6 @@ def test_epub_summary_line_printed(tmp_path: Path) -> None:
     assert ".epub" in result.output, \
         f"EPUB filename should appear in the completion summary: {result.output!r}"
 
-
-def test_conference_filter_is_case_insensitive(tmp_path: Path) -> None:
-    """The --conference filter must match case-insensitively.
-
-    Users will naturally type 'april 2024' instead of 'April 2024'.
-    """
-    refs = [_make_ref("April 2024 General Conference", 2024, 4)]
-    conference = _make_conference()
-
-    with (
-        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
-        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
-        patch("gencon_audiobook.cli.download_conference"),
-        patch("gencon_audiobook.cli.build_epub"),
-    ):
-        runner = CliRunner()
-        result = runner.invoke(
-            main, ["--output", str(tmp_path), "--epub-only", "--conference", "april 2024"]
-        )
-
-    assert result.exit_code == 0, \
-        f"Lowercase --conference filter should match; got exit {result.exit_code}: {result.output}"
 
 
 def test_log_file_created_in_output_dir(tmp_path: Path) -> None:

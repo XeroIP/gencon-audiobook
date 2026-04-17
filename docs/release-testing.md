@@ -42,7 +42,7 @@ The epub-only pass covers scraping, image downloading, HTML sanitization, and EP
 without needing ffmpeg or a 200 MB MP3 download. Run this first.
 
 ```bash
-gencon-audiobook --epub-only --conference "April 2024" --output ~/gc-test
+gencon-audiobook --epub-only --conference 2024-04 --output ~/gc-test
 ```
 
 **What to check:**
@@ -65,7 +65,7 @@ gencon-audiobook --epub-only --conference "April 2024" --output ~/gc-test
 ## Step 3: Full run — audiobook + epub (~30–60 min)
 
 ```bash
-gencon-audiobook --conference "April 2024" --output ~/gc-test --overwrite
+gencon-audiobook --conference 2024-04 --output ~/gc-test --overwrite
 ```
 
 **What to check in the completion report:**
