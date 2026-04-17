@@ -126,7 +126,6 @@ nav li {
 aside {
   margin: 1.5em 0 0.5em;
   padding-left: 1em;
-  font-size: 0.85em;
 }
 
 .transcript.numbered {
@@ -138,7 +137,6 @@ aside {
   width: 2em;
   margin-left: -2.5em;
   text-align: right;
-  font-size: 0.8em;
   line-height: inherit;
 }
 """

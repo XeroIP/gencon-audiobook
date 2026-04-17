@@ -569,15 +569,15 @@ def test_build_epub_css_has_no_font_family(tmp_path: Path) -> None:
         "CSS must not contain font-family declarations"
 
 
-def test_build_epub_css_has_no_absolute_font_sizes(tmp_path: Path) -> None:
+def test_build_epub_css_has_no_font_size_declarations(tmp_path: Path) -> None:
     conference = _make_conference(n_talks=2)
     output = tmp_path / "test.epub"
     build_epub(conference, tmp_path, output)
     css = _epub_read(output, "style.css").decode("utf-8")
     css_no_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
-    # Absolute units: px, pt, cm, mm, in, pc
-    assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", css_no_comments), \
-        "CSS must not use absolute font-size units (px, pt, cm, mm, in, pc)"
+    # font-size of any unit is banned — defer text sizing entirely to the reader
+    assert not re.search(r"\bfont-size\s*:", css_no_comments), \
+        "CSS must not contain any font-size declarations (any unit)"
 
 
 # ---------------------------------------------------------------------------
@@ -1135,5 +1135,5 @@ def test_build_epub_css_para_num_theme_safe(tmp_path: Path) -> None:
     assert not re.search(r"\bcolor\s*:", block), ".para-num must not set color"
     assert not re.search(r"\bbackground(-color)?\s*:", block), ".para-num must not set background"
     assert not re.search(r"\bfont-family\s*:", block), ".para-num must not set font-family"
-    assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", block), \
-        ".para-num must not use absolute font-size units"
+    assert not re.search(r"\bfont-size\s*:", block), \
+        ".para-num must not contain any font-size declaration (any unit)"
