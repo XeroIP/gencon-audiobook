@@ -252,8 +252,9 @@ def test_disk_space_warning_printed(tmp_path: Path) -> None:
         runner = CliRunner()
         result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
 
-    assert "500 MB" in result.output, "Disk space warning should mention 500 MB threshold"
-    assert "100 MB" in result.output, "Disk space warning should show available space"
+    normalized_output = " ".join(result.output.split())
+    assert "500 MB" in normalized_output, "Disk space warning should mention 500 MB threshold"
+    assert "100 MB" in normalized_output, "Disk space warning should show available space"
 
 
 # ---------------------------------------------------------------------------

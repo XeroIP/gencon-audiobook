@@ -16,7 +16,8 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from .models import Conference, InlineImage, Session, Talk
-from .progress import shared_console as console, standard_progress
+from .progress import shared_console as console
+from .progress import standard_progress
 from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ def _get_robots(http: requests.Session, base_url: str) -> RobotFileParser | None
         parser.parse(response.text.splitlines())
         _robots_cache[base_url] = parser
         logger.debug("Fetched robots.txt from %s", robots_url)
-    except Exception as exc:
+    except (requests.RequestException, OSError) as exc:
         logger.warning("Could not fetch robots.txt from %s: %s — proceeding anyway", robots_url, exc)
         _robots_cache[base_url] = None
 
@@ -327,7 +328,7 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
         try:
             json_bytes = base64.b64decode(match.group(1))
             return cast(dict[str, Any], json.loads(json_bytes))
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             logger.debug("Failed to base64-decode __INITIAL_STATE__: %s", exc)
 
     # Fallback: raw JSON object (some pages may not encode it)

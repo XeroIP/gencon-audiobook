@@ -11,6 +11,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from mutagen import MutagenError
 from mutagen.mp4 import MP4
 from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
 
@@ -438,7 +439,7 @@ def _verify_m4b(output_path: Path, conference: Conference, ffprobe_path: Path) -
         has_cover = mp4.tags is not None and "covr" in mp4.tags
         if not has_cover:
             logger.warning("Verification: no cover art found in %s", output_path.name)
-    except Exception as exc:
+    except (MutagenError, OSError) as exc:
         logger.warning("Verification: mutagen could not read %s: %s", output_path.name, exc)
 
     # Chapter count and titles — ffprobe
@@ -452,6 +453,7 @@ def _verify_m4b(output_path: Path, conference: Conference, ffprobe_path: Path) -
                 str(output_path),
             ],
             capture_output=True,
+            check=True,
             text=True,
             encoding="utf-8",
             timeout=30,
@@ -483,7 +485,7 @@ def _verify_m4b(output_path: Path, conference: Conference, ffprobe_path: Path) -
             "Verified m4b: %d chapters, %.0fs total", chapter_count, total_s
         )
 
-    except Exception as exc:
+    except (json.JSONDecodeError, OSError, subprocess.SubprocessError, ValueError) as exc:
         logger.warning("Verification: ffprobe chapter check failed: %s", exc)
 
 
