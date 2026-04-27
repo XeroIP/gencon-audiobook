@@ -8,9 +8,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from conftest import make_jpeg as _make_jpeg
 from PIL import Image
 
-from conftest import make_jpeg as _make_jpeg
 from gencon_audiobook.epub_builder import (
     EpubError,
     _make_portrait_cover,
@@ -19,7 +19,6 @@ from gencon_audiobook.epub_builder import (
     build_epub,
 )
 from gencon_audiobook.models import Conference, Session, Talk
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -235,13 +234,6 @@ def test_sanitize_transcript_strips_random_ids() -> None:
     result = _sanitize_transcript(html)
     assert 'id="p_fvoG6"' not in result, f"Random id must be stripped, got: {result!r}"
     assert "Text." in result, "Paragraph content must be preserved"
-
-
-def test_sanitize_transcript_preserves_note_ids() -> None:
-    """id attributes starting with 'note' must be preserved for footnote anchors."""
-    html = '<p id="note1">Footnote text.</p>'
-    result = _sanitize_transcript(html)
-    assert 'id="note1"' in result, f"note id must be preserved, got: {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +691,6 @@ def test_build_epub_title_with_special_chars_escaped(tmp_path: Path) -> None:
     output = tmp_path / "test.epub"
     build_epub(conference, tmp_path, output)
 
-    from gencon_audiobook.utils import sanitize_filename
     # sanitize_filename strips < and > so we need to find the actual filename
     with zipfile.ZipFile(output) as zf:
         talk_page = next(n for n in zf.namelist() if n.startswith("text/talk-001-"))

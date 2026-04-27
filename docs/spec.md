@@ -21,6 +21,8 @@ gencon-audiobook --output ~/Books         # Custom output directory
 gencon-audiobook --verbose                # Enable DEBUG-level console output
 gencon-audiobook --overwrite              # Overwrite existing output files
 gencon-audiobook --force-scrape           # Bypass conference.json cache, re-scrape from website
+gencon-audiobook --bitrate 32k --sample-rate 22050
+gencon-audiobook --epub-paragraph-numbers # Add paragraph numbers to EPUB transcripts
 ```
 
 ## Output Structure
@@ -128,6 +130,7 @@ class ConferenceRef:
 class InlineImage:
     """A single inline body image referenced in a talk's transcript."""
     url: str       # Full URL (IIIF, rewritten to 800px before download)
+    alt: str       # Alt text from the source <img> element
     asset_id: str  # Unique identifier used as the filename component
 
 @dataclass
@@ -189,7 +192,12 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "responses>=0.23",         # Mock HTTP requests in unit tests
+    "build>=1.2",              # Build sdist/wheel from the documented dev environment
     "pip-audit>=2.0",          # Dependency vulnerability scanning
+    "ruff>=0.3",               # Linting
+    "mypy>=1.9",               # Type checking
+    "types-requests>=2.31",    # requests type stubs
+    "types-beautifulsoup4>=4.12",  # BeautifulSoup type stubs
 ]
 ```
 

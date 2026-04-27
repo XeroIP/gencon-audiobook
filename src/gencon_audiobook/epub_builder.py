@@ -914,7 +914,7 @@ def build_epub(
                         photo_bytes = _resize_photo(d["photo_src"])
                         zf.writestr(d["photo_epub_href"], photo_bytes, compress_type=zipfile.ZIP_STORED)
                         logger.debug("Added speaker photo: %s", d["photo_epub_href"])
-                    except Exception as exc:
+                    except (OSError, RuntimeError, ValueError) as exc:
                         logger.warning(
                             "Could not embed speaker photo for %r: %s — skipping",
                             d["talk"].speaker,
@@ -927,7 +927,7 @@ def build_epub(
                         img_bytes = _resize_image(src_path, _MAX_INLINE_WIDTH)
                         zf.writestr(epub_href, img_bytes, compress_type=zipfile.ZIP_STORED)
                         logger.debug("Added inline image: %s", epub_href)
-                    except Exception as exc:
+                    except (OSError, RuntimeError, ValueError) as exc:
                         logger.warning(
                             "Could not embed inline image %s: %s — skipping",
                             src_path.name,

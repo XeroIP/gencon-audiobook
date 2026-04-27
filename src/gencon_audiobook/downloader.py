@@ -13,8 +13,10 @@ from typing import cast
 
 import requests
 from PIL import Image
+
 from .models import Conference, Talk
-from .progress import shared_console as _console, standard_progress
+from .progress import shared_console as _console
+from .progress import standard_progress
 from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,7 @@ def download_file(
             if expected > 0 and dest.stat().st_size == expected:
                 logger.debug("Skipping %s — already downloaded (%d bytes)", dest.name, expected)
                 return False
-        except Exception as exc:
+        except (OSError, requests.RequestException, ValueError) as exc:
             logger.debug("HEAD request failed for %s, re-downloading: %s", url, exc)
 
     tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -105,7 +107,7 @@ def download_file(
             logger.debug("Downloaded: %s (%d bytes)", dest.name, dest.stat().st_size)
             return True
 
-        except Exception as exc:
+        except (OSError, requests.RequestException) as exc:
             last_exc = exc
             logger.debug("Download attempt %d failed for %s: %s", attempt + 1, url, exc)
             if tmp.exists():
@@ -191,7 +193,7 @@ def _download_image(
             logger.debug("Downloaded image: %s (%d bytes)", dest.name, dest.stat().st_size)
             return True
 
-        except Exception as exc:
+        except (OSError, requests.RequestException) as exc:
             last_exc = exc
             logger.debug("Image download attempt %d failed for %s: %s", attempt + 1, url, exc)
             if tmp.exists():

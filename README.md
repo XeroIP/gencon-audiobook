@@ -106,6 +106,9 @@ pip install -e ".[dev]"
 # Run unit tests (no network required)
 pytest tests/ --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
 
+# Build source and wheel distributions
+python -m build
+
 # Run live smoke tests (hits the real website)
 pytest tests/test_scraper_live.py -v -m live
 

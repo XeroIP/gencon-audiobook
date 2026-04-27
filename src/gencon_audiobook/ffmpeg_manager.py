@@ -43,7 +43,7 @@ def _get_version(binary: Path) -> str:
         )
         first_line = result.stdout.splitlines()[0] if result.stdout else "unknown"
         return first_line
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         logger.debug("Could not get version for %s: %s", binary, exc)
         return "unknown"
 
@@ -91,7 +91,7 @@ def ensure_ffmpeg() -> Path:
             logger.info("Downloaded ffmpeg to %s (%s)", path, version)
             _ffmpeg_path = path
             return _ffmpeg_path
-    except Exception as exc:
+    except (AttributeError, ImportError, OSError, RuntimeError) as exc:
         logger.debug("static-ffmpeg failed: %s", exc)
 
     raise FfmpegNotFoundError(_INSTALL_INSTRUCTIONS)
