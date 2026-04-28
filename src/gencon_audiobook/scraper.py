@@ -797,7 +797,17 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
     # Transcript — primary: div.body-block
     body = soup.find("div", class_="body-block")
     if body:
-        result["transcript_html"] = str(body)
+        transcript_parts = [str(body)]
+        # The Church site places footnote bodies in <footer class="notes">, which is a
+        # sibling of div.body-block, not inside it. Append its HTML so the EPUB builder
+        # has the note bodies it needs to render footnotes. Guard against duplication:
+        # only append when the primary selector (not the article fallback) was used,
+        # since article fallbacks already capture the full article including the footer.
+        notes_footer = soup.find("footer", class_="notes")
+        if notes_footer:
+            transcript_parts.append(str(notes_footer))
+            logger.debug("transcript: appended footer.notes (%d chars)", len(str(notes_footer)))
+        result["transcript_html"] = "".join(transcript_parts)
         logger.debug("transcript (primary div.body-block): %d chars", len(result["transcript_html"] or ""))
 
     if not result["transcript_html"]:
