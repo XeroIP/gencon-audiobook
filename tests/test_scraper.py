@@ -268,6 +268,28 @@ def test_parse_talk_page_deduplicates_inline_images():
     assert len(data["inline_images"]) == 1, "Duplicate asset_id should be deduplicated"
 
 
+def test_parse_talk_page_captures_footnote_bodies_from_footer():
+    """footer.notes content must appear in transcript_html so the EPUB builder can render it.
+
+    The Church site places footnote bodies in <footer class="notes"> as a sibling of
+    <div class="body-block">, not inside it. parse_talk_page() must capture both
+    so the EPUB builder has the note bodies it needs.
+    """
+    html = _load("talk_page_with_notes.html")
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/study/general-conference/2024/04/31bowen?lang=eng")
+    transcript = data["transcript_html"] or ""
+    assert 'id="note1"' in transcript, (
+        "Footnote body id='note1' must be present in transcript_html"
+    )
+    assert 'id="note2"' in transcript, (
+        "Footnote body id='note2' must be present in transcript_html"
+    )
+    # Verify note content survived
+    assert "Matthew 16" in transcript, (
+        "Footnote body text must be present in transcript_html"
+    )
+
+
 # ---------------------------------------------------------------------------
 # robots.txt (#23)
 # ---------------------------------------------------------------------------
@@ -485,3 +507,40 @@ def test_upgrade_iiif_leaves_non_iiif_url_unchanged() -> None:
     assert _upgrade_iiif(url) == url, (
         f"Non-IIIF URL must pass through unchanged, got: {_upgrade_iiif(url)!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _CONF_URL_RE
+# ---------------------------------------------------------------------------
+
+
+def test_conf_url_re_matches_modern_slug() -> None:
+    """_CONF_URL_RE must match modern (no-hyphen) talk slugs."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04/11oaks"
+    assert _CONF_URL_RE.search(url), f"Expected match for modern slug: {url!r}"
+
+
+def test_conf_url_re_matches_hyphenated_slug() -> None:
+    """_CONF_URL_RE must match pre-2020 hyphenated talk slugs (the old bug)."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/1999/04/the-work-moves-forward"
+    assert _CONF_URL_RE.search(url), f"Expected match for hyphenated slug: {url!r}"
+
+
+def test_conf_url_re_matches_session_slug() -> None:
+    """Session slugs also match _CONF_URL_RE — DOM position distinguishes sessions from talks."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04/saturday-morning-session"
+    assert _CONF_URL_RE.search(url), f"Expected match for session slug: {url!r}"
+
+
+def test_conf_url_re_rejects_archive_url() -> None:
+    """_CONF_URL_RE must not match the top-level archive URL (no talk slug)."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04"
+    assert not _CONF_URL_RE.search(url), f"Should not match bare conference URL: {url!r}"

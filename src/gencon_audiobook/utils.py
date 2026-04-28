@@ -98,6 +98,6 @@ def validate_url(url: str) -> bool:
         if not result:
             logger.debug("URL rejected by allowlist: %s", url)
         return result
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         logger.debug("URL validation failed (malformed URL): %s", url)
         return False

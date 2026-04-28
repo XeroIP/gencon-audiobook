@@ -14,13 +14,19 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
+from conftest import FFMPEG as _FFMPEG
+from conftest import FFPROBE as _FFPROBE
+from conftest import make_jpeg as _make_jpeg
+from conftest import make_silent_mp3 as _make_silent_mp3
+from conftest import requires_ffmpeg
 from mutagen.mp4 import MP4
+from PIL import Image
 
-from conftest import FFMPEG as _FFMPEG, FFPROBE as _FFPROBE, make_jpeg as _make_jpeg, make_silent_mp3 as _make_silent_mp3, requires_ffmpeg
 from gencon_audiobook.audio import build_m4b
 from gencon_audiobook.epub_builder import build_epub
 from gencon_audiobook.models import Conference, Session, Talk

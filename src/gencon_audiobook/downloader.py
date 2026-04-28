@@ -6,23 +6,17 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import cast
 
 import requests
 from PIL import Image
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 
 from .models import Conference, Talk
-from .progress import TimeRemainingWithLabel
+from .progress import shared_console as _console
+from .progress import standard_progress
 from .utils import USER_AGENT, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
@@ -41,13 +35,22 @@ class DownloadError(Exception):
     """Raised when a file download fails after all retries."""
 
 
+@dataclass
+class DownloadResult:
+    """Results returned by download_conference()."""
+
+    failed_talks: list[Talk] = field(default_factory=list)
+    downloaded: int = 0
+    skipped: int = 0
+
+
 def download_file(
     url: str,
     dest: Path,
     session: requests.Session,
     timeout: tuple[int, int] = (30, 120),
     retries: int = 3,
-) -> None:
+) -> bool:
     """Download a single file to dest, using .tmp + rename for atomicity.
 
     Skips download if dest already exists with expected size (from Content-Length).
@@ -59,6 +62,9 @@ def download_file(
         session: requests.Session to use.
         timeout: (connect_timeout, read_timeout) in seconds.
         retries: Number of retry attempts with exponential backoff.
+
+    Returns:
+        True if the file was downloaded, False if it was skipped (already present).
 
     Raises:
         DownloadError: if download fails after all retries.
@@ -74,8 +80,8 @@ def download_file(
             expected = int(head.headers.get("Content-Length", -1))
             if expected > 0 and dest.stat().st_size == expected:
                 logger.debug("Skipping %s — already downloaded (%d bytes)", dest.name, expected)
-                return
-        except Exception as exc:
+                return False
+        except (OSError, requests.RequestException, ValueError) as exc:
             logger.debug("HEAD request failed for %s, re-downloading: %s", url, exc)
 
     tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -99,9 +105,9 @@ def download_file(
 
             tmp.replace(dest)
             logger.debug("Downloaded: %s (%d bytes)", dest.name, dest.stat().st_size)
-            return
+            return True
 
-        except Exception as exc:
+        except (OSError, requests.RequestException) as exc:
             last_exc = exc
             logger.debug("Download attempt %d failed for %s: %s", attempt + 1, url, exc)
             if tmp.exists():
@@ -140,7 +146,7 @@ def _download_image(
     session: requests.Session,
     timeout: tuple[int, int] = (30, 120),
     retries: int = 3,
-) -> None:
+) -> bool:
     """Download an image, convert to JPEG, and save to dest.
 
     Skips if dest already exists (images don't resume by size — content-identical
@@ -153,6 +159,9 @@ def _download_image(
         timeout: (connect_timeout, read_timeout) in seconds.
         retries: Number of retry attempts.
 
+    Returns:
+        True if the image was downloaded, False if it was skipped (already present).
+
     Raises:
         DownloadError: if download or conversion fails after all retries.
         ValueError: if url fails validate_url().
@@ -162,7 +171,7 @@ def _download_image(
 
     if dest.exists():
         logger.debug("Skipping image %s — already exists", dest.name)
-        return
+        return False
 
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     last_exc: Exception | None = None
@@ -182,9 +191,9 @@ def _download_image(
             tmp.write_bytes(jpeg_bytes)
             tmp.replace(dest)
             logger.debug("Downloaded image: %s (%d bytes)", dest.name, dest.stat().st_size)
-            return
+            return True
 
-        except Exception as exc:
+        except (OSError, requests.RequestException) as exc:
             last_exc = exc
             logger.debug("Image download attempt %d failed for %s: %s", attempt + 1, url, exc)
             if tmp.exists():
@@ -255,21 +264,22 @@ def download_conference(
     output_dir: Path,
     delay: float = 0.5,
     skip_audio: bool = False,
-) -> list[Talk]:
+) -> DownloadResult:
     """Download all MP3s, cover image, and speaker photos for a conference.
 
     Files are downloaded to .tmp first, renamed on success. Existing files of
     the correct size are skipped (resume behavior). Speaker photos are converted
-    to JPEG. Progress is shown via rich progress bars.
+    to JPEG. Progress is shown via rich progress bars only when files actually
+    need downloading.
 
     Args:
         conference: Fully populated Conference object with mp3_urls set.
         output_dir: Directory to download into. Created if it doesn't exist.
-        delay: Seconds to wait between HTTP requests.
+        delay: Seconds to wait between audio HTTP requests.
         skip_audio: If True, skip MP3 downloads (for --epub-only mode).
 
     Returns:
-        List of Talk objects whose audio download failed (empty if all succeeded).
+        DownloadResult with counts of downloaded/skipped files and any failed talks.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_tmp_files(output_dir)
@@ -305,7 +315,25 @@ def download_conference(
 
     if not queue:
         logger.info("Nothing to download.")
-        return []
+        return DownloadResult()
+
+    # Pre-scan: count locally present files without making HEAD requests.
+    # This is an approximation — audio files are further verified by Content-Length
+    # inside download_file, but the pre-scan is cheap and accurate enough for UX.
+    pre_exists = sum(1 for _, dest, _, _, _ in queue if dest.exists())
+    needs_download = len(queue) - pre_exists
+
+    if needs_download == 0:
+        logger.debug("All %d files already present — skipping download phase.", len(queue))
+        return DownloadResult(skipped=len(queue))
+
+    if pre_exists > 0:
+        _console.print(
+            f"Downloading {needs_download} of {len(queue)} files "
+            f"({pre_exists} already present)..."
+        )
+    else:
+        _console.print(f"Downloading {len(queue)} files...")
 
     image_queue = [(url, dest, label) for url, dest, label, is_image, _ in queue if is_image]
     audio_queue = [(url, dest, label, talk) for url, dest, label, is_image, talk in queue if not is_image]
@@ -316,17 +344,12 @@ def download_conference(
         len(image_queue),
     )
 
-    overall_progress = Progress(
-        SpinnerColumn(),
-        MofNCompleteColumn(),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeRemainingWithLabel(compact=True),
-        TextColumn("[progress.description]{task.description}"),
-    )
+    overall_progress = standard_progress()
 
     failed: list[str] = []
     failed_talks: list[Talk] = []
+    downloaded = 0
+    skipped = 0
 
     with overall_progress:
         overall_task = overall_progress.add_task("Downloading files", total=len(queue))
@@ -336,15 +359,15 @@ def download_conference(
         # requests.Session is not thread-safe.
         if image_queue:
 
-            def _download_one_image(args: tuple[str, Path, str]) -> str | None:
-                """Worker: download one image. Returns label on failure, None on success."""
+            def _download_one_image(args: tuple[str, Path, str]) -> tuple[bool, str | None]:
+                """Worker: download one image. Returns (was_downloaded, label_on_failure)."""
                 url, dest, label = args
                 try:
-                    _download_image(url, dest, _get_thread_session(), retries=3)
-                    return None
+                    was_downloaded = _download_image(url, dest, _get_thread_session(), retries=3)
+                    return was_downloaded, None
                 except (DownloadError, ValueError) as exc:
                     logger.error("Failed to download %s: %s", label, exc)
-                    return label
+                    return False, label
                 finally:
                     overall_progress.advance(overall_task)
 
@@ -352,9 +375,13 @@ def download_conference(
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {executor.submit(_download_one_image, item): item for item in image_queue}
                 for future in as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        failed.append(result)
+                    was_downloaded, error_label = future.result()
+                    if error_label is not None:
+                        failed.append(error_label)
+                    elif was_downloaded:
+                        downloaded += 1
+                    else:
+                        skipped += 1
 
         # Audio: sequential with courtesy delay between requests.
         # MP3s are large; parallel streaming of many large files simultaneously
@@ -363,8 +390,12 @@ def download_conference(
         for url, dest, label, queue_talk in audio_queue:
             overall_progress.update(overall_task, description=label)
             try:
-                download_file(url, dest, session, retries=3)
-                time.sleep(delay)
+                was_downloaded = download_file(url, dest, session, retries=3)
+                if was_downloaded:
+                    downloaded += 1
+                    time.sleep(delay)
+                else:
+                    skipped += 1
             except (DownloadError, ValueError) as exc:
                 logger.error("Failed to download %s: %s", label, exc)
                 failed.append(label)
@@ -380,4 +411,4 @@ def download_conference(
             ", ".join(failed),
         )
 
-    return failed_talks
+    return DownloadResult(failed_talks=failed_talks, downloaded=downloaded, skipped=skipped)

@@ -8,9 +8,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from conftest import make_jpeg as _make_jpeg
 from PIL import Image
 
-from conftest import make_jpeg as _make_jpeg
 from gencon_audiobook.epub_builder import (
     EpubError,
     _make_portrait_cover,
@@ -19,7 +19,6 @@ from gencon_audiobook.epub_builder import (
     build_epub,
 )
 from gencon_audiobook.models import Conference, Session, Talk
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -186,6 +185,65 @@ def test_sanitize_transcript_noteref_link_preserved_with_epub_type() -> None:
     assert "<sup" in result, "Superscript inside noteref must be preserved"
 
 
+def test_sanitize_transcript_real_noteref_url_normalized() -> None:
+    """Church note-ref links use full talk-page URLs ending in #noteN, not bare fragments.
+
+    A link like href="/study/general-conference/2024/04/31bowen?lang=eng#note1" with
+    class="note-ref" and data-scroll-id="note1" must be normalized to href="#note1"
+    and marked as epub:type="noteref". The existing href-fragment check does not handle
+    this case — it only matches bare "#note" prefixes.
+    """
+    html = (
+        '<p>Priesthood keys.<a class="note-ref" '
+        'data-scroll-id="note1" '
+        'href="/study/general-conference/2024/04/31bowen?lang=eng#note1">'
+        '<sup class="marker" data-value="1"></sup></a></p>'
+    )
+    result = _sanitize_transcript(html)
+    assert 'href="#note1"' in result, (
+        f"Full URL note-ref must be normalized to bare fragment, got: {result!r}"
+    )
+    assert 'epub:type="noteref"' in result, (
+        f"epub:type noteref must be added to normalized note-ref, got: {result!r}"
+    )
+
+
+def test_sanitize_transcript_li_footnote_body_wrapped_in_aside() -> None:
+    """Real Church footnote bodies use <li id='noteN'>, not <p id='noteN'>.
+
+    The EPUB builder must wrap <li id="noteN"> in <aside epub:type="footnote"> just
+    as it does for <p id="noteN"> shapes, since the real site uses list items.
+    """
+    html = (
+        '<ol><li id="note1">'
+        '<p>See <a href="/study/scriptures/nt/matt/16">Matthew 16:17</a>.</p>'
+        '</li></ol>'
+    )
+    result = _sanitize_transcript(html)
+    assert '<aside epub:type="footnote" id="note1">' in result, (
+        f"<li id='note1'> must become <aside epub:type='footnote' id='note1'>, got: {result!r}"
+    )
+    assert "Matthew 16:17" in result, "Footnote body text must survive wrapping"
+
+
+def test_sanitize_transcript_note_title_id_not_wrapped() -> None:
+    """id='note_title1' is a section heading, not a footnote body — must not be wrapped."""
+    html = '<p id="note_title1">Notes</p>'
+    result = _sanitize_transcript(html)
+    assert '<aside epub:type="footnote"' not in result, (
+        f"note_title* id must not produce a footnote aside, got: {result!r}"
+    )
+
+
+def test_sanitize_transcript_child_note_id_not_wrapped() -> None:
+    """id='note1_p1' is a child element ID, not a footnote body — must not be wrapped."""
+    html = '<p id="note1_p1">Child paragraph text.</p>'
+    result = _sanitize_transcript(html)
+    assert '<aside epub:type="footnote"' not in result, (
+        f"note1_p1 id must not produce a footnote aside, got: {result!r}"
+    )
+
+
 def test_sanitize_transcript_non_note_links_still_unwrapped() -> None:
     """Non-footnote <a> tags (scripture refs, cross-refs) must still be unwrapped."""
     html = '<p>See <a href="https://www.churchofjesuschrist.org/scripture/1ne/1.1">1 Ne. 1:1</a>.</p>'
@@ -235,13 +293,6 @@ def test_sanitize_transcript_strips_random_ids() -> None:
     result = _sanitize_transcript(html)
     assert 'id="p_fvoG6"' not in result, f"Random id must be stripped, got: {result!r}"
     assert "Text." in result, "Paragraph content must be preserved"
-
-
-def test_sanitize_transcript_preserves_note_ids() -> None:
-    """id attributes starting with 'note' must be preserved for footnote anchors."""
-    html = '<p id="note1">Footnote text.</p>'
-    result = _sanitize_transcript(html)
-    assert 'id="note1"' in result, f"note id must be preserved, got: {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +398,71 @@ def test_build_epub_session_headers_are_links(tmp_path: Path) -> None:
         "Session header must not use <span>"
     assert f">{session_name}</a>" in nav, \
         "Session header must use <a> linking to first talk"
+
+
+# ---------------------------------------------------------------------------
+# build_epub — footnote end-to-end (ZIP-level assertions)
+# ---------------------------------------------------------------------------
+
+
+def _make_conference_with_notes() -> Conference:
+    """Return a one-talk Conference whose transcript contains realistic Church note markup."""
+    # Note refs use full talk-page URLs (as the Church site generates them), not bare fragments.
+    # Note bodies come from footer.notes as <li id="noteN"> elements (already appended to
+    # transcript_html by the scraper — this simulates a post-fix scrape result).
+    transcript = (
+        '<div class="body-block">'
+        '<p>Priesthood keys.'
+        '<a class="note-ref" data-scroll-id="note1" '
+        'href="/study/general-conference/2024/04/31bowen?lang=eng#note1">'
+        '<sup class="marker" data-value="1"></sup></a></p>'
+        '</div>'
+        '<footer class="notes">'
+        '<ol class="decimal">'
+        '<li id="note1"><p>See Matthew 16:17&#x2013;19.</p></li>'
+        '</ol>'
+        '</footer>'
+    )
+    talk = Talk(
+        title="Miracles, Angels, and Priesthood Power",
+        speaker="Elder Shayne M. Bowen",
+        talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/31bowen?lang=eng",
+        talk_index=1,
+        transcript_html=transcript,
+    )
+    session = Session(name="Saturday Morning Session", number=1, talks=[talk])
+    return Conference(
+        title="April 2024 General Conference",
+        year=2024,
+        month=4,
+        cover_image_url=None,
+        sessions=[session],
+        conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
+    )
+
+
+def test_build_epub_footnotes_noteref_in_output(tmp_path: Path) -> None:
+    """A talk with Church-style note refs must produce epub:type="noteref" in the EPUB ZIP.
+
+    This is a build-level regression test: it verifies that the entire pipeline from
+    transcript_html through _sanitize_transcript() and into the final EPUB file preserves
+    footnote markup — not just that the sanitizer function returns the right string.
+    """
+    conference = _make_conference_with_notes()
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    talk_files = [n for n in _epub_names(output) if n.startswith("text/talk-")]
+    assert talk_files, "Expected at least one talk XHTML file in the EPUB"
+    talk_content = _epub_read(output, talk_files[0]).decode("utf-8")
+    assert 'epub:type="noteref"' in talk_content, (
+        f"epub:type='noteref' must appear in the talk XHTML; got:\n{talk_content[:2000]}"
+    )
+    assert 'epub:type="footnote"' in talk_content, (
+        f"epub:type='footnote' must appear in the talk XHTML; got:\n{talk_content[:2000]}"
+    )
+    assert 'href="#note1"' in talk_content, (
+        f"Normalized note href '#note1' must appear in the talk XHTML; got:\n{talk_content[:2000]}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -569,15 +685,15 @@ def test_build_epub_css_has_no_font_family(tmp_path: Path) -> None:
         "CSS must not contain font-family declarations"
 
 
-def test_build_epub_css_has_no_absolute_font_sizes(tmp_path: Path) -> None:
+def test_build_epub_css_has_no_font_size_declarations(tmp_path: Path) -> None:
     conference = _make_conference(n_talks=2)
     output = tmp_path / "test.epub"
     build_epub(conference, tmp_path, output)
     css = _epub_read(output, "style.css").decode("utf-8")
     css_no_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
-    # Absolute units: px, pt, cm, mm, in, pc
-    assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", css_no_comments), \
-        "CSS must not use absolute font-size units (px, pt, cm, mm, in, pc)"
+    # font-size of any unit is banned — defer text sizing entirely to the reader
+    assert not re.search(r"\bfont-size\s*:", css_no_comments), \
+        "CSS must not contain any font-size declarations (any unit)"
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +815,6 @@ def test_build_epub_title_with_special_chars_escaped(tmp_path: Path) -> None:
     output = tmp_path / "test.epub"
     build_epub(conference, tmp_path, output)
 
-    from gencon_audiobook.utils import sanitize_filename
     # sanitize_filename strips < and > so we need to find the actual filename
     with zipfile.ZipFile(output) as zf:
         talk_page = next(n for n in zf.namelist() if n.startswith("text/talk-001-"))
@@ -1135,5 +1250,5 @@ def test_build_epub_css_para_num_theme_safe(tmp_path: Path) -> None:
     assert not re.search(r"\bcolor\s*:", block), ".para-num must not set color"
     assert not re.search(r"\bbackground(-color)?\s*:", block), ".para-num must not set background"
     assert not re.search(r"\bfont-family\s*:", block), ".para-num must not set font-family"
-    assert not re.search(r"\bfont-size\s*:[^;]*\d(px|pt|cm|mm|in|pc)\b", block), \
-        ".para-num must not use absolute font-size units"
+    assert not re.search(r"\bfont-size\s*:", block), \
+        ".para-num must not contain any font-size declaration (any unit)"

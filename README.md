@@ -37,7 +37,7 @@ New to the terminal or Python? See the [User Guide](https://github.com/XeroIP/ge
 gencon-audiobook
 
 # Select a specific conference
-gencon-audiobook --conference "April 2024"
+gencon-audiobook --conference 2024-04
 
 # Audiobook only (skip epub)
 gencon-audiobook --audiobook-only
@@ -105,6 +105,9 @@ pip install -e ".[dev]"
 
 # Run unit tests (no network required)
 pytest tests/ --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
+
+# Build source and wheel distributions
+python -m build
 
 # Run live smoke tests (hits the real website)
 pytest tests/test_scraper_live.py -v -m live

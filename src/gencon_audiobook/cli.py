@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
+import calendar
 import logging
+import re
 import shutil
 import sys
 import time
 from pathlib import Path
 
 import click
-from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .audio import AudioError, BuildStats, build_m4b
 from .cache import CACHE_FILENAME, load_cache, save_cache
-from .downloader import DownloadError, download_conference
+from .downloader import DownloadError, DownloadResult, download_conference
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
 from .models import Talk
+from .progress import shared_console
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
 logger = logging.getLogger(__name__)
@@ -28,8 +30,13 @@ _LOG_FILENAME = "gencon-audiobook.log"
 _MIN_PYTHON = (3, 10)
 _DISK_WARN_MB = 500
 
-# Module-level console so helpers can print without threading a Console argument.
-console = Console()
+# Use the shared console from progress.py so RichHandler and all Progress bars
+# write through the same Console — Rich then interleaves log messages correctly
+# above the live progress bar instead of clobbering the same terminal line.
+console = shared_console
+
+_CONF_BASE = "https://www.churchofjesuschrist.org/study/general-conference"
+_CONFERENCE_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 
 
 # ---------------------------------------------------------------------------
@@ -124,20 +131,36 @@ def _check_disk_space(path: Path) -> None:
 def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     """Resolve the conference to download.
 
-    If conference_filter is given, find the first match (case-insensitive).
-    Otherwise print a numbered menu and default to the most recent.
+    If conference_filter is given as YYYY-MM, construct the URL directly — no
+    listing fetch needed. Otherwise fetch the listing and default to the most recent.
 
     Args:
-        conference_filter: Partial conference name to match, or None.
+        conference_filter: Conference date as YYYY-MM (e.g., '2024-04'), or None.
 
     Returns:
         (title, url) of the selected conference.
 
     Raises:
-        SystemExit: if the filter matches nothing or the list cannot be fetched.
+        SystemExit: if the format is invalid or the listing cannot be fetched.
     """
+    if conference_filter:
+        m = _CONFERENCE_RE.match(conference_filter)
+        if not m:
+            click.echo(
+                f"Error: Invalid conference format {conference_filter!r}.\n"
+                "Expected YYYY-MM (e.g., '2024-04' or '1999-10').",
+                err=True,
+            )
+            sys.exit(1)
+        year, month = int(m.group(1)), int(m.group(2))
+        title = f"{calendar.month_name[month]} {year} General Conference"
+        url = f"{_CONF_BASE}/{year}/{month:02d}"
+        console.print(f"Selected: {title}")
+        return title, url
+
+    # No filter — fetch listing, default to most recent.
     try:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as sp:
             sp.add_task("Fetching available conferences...")
             refs = fetch_available_conferences()
     except ScraperError as exc:
@@ -152,23 +175,6 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         )
         sys.exit(1)
 
-    if conference_filter:
-        needle = conference_filter.lower()
-        matches = [r for r in refs if needle in r.title.lower()]
-        if not matches:
-            click.echo(
-                f"Error: No conference matching {conference_filter!r}.\n\n"
-                "Available conferences:",
-                err=True,
-            )
-            for i, r in enumerate(refs[:10], 1):
-                click.echo(f"  {i}. {r.title}", err=True)
-            sys.exit(1)
-        selected = matches[0]
-        console.print(f"Selected: {selected.title}")
-        return selected.title, selected.url
-
-    # Default: most recent (first in list)
     console.print(f"Found {len(refs)} conferences. Using: {refs[0].title}")
     return refs[0].title, refs[0].url
 
@@ -188,7 +194,7 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 @click.option(
     "--conference",
     default=None,
-    help="Conference to download (e.g., 'April 2024'). Defaults to most recent.",
+    help="Conference date as YYYY-MM (e.g., '2024-04'). Defaults to most recent.",
 )
 @click.option(
     "--audiobook-only",
@@ -407,16 +413,18 @@ def _run(
     _check_disk_space(conf_output_dir)
 
     # Download audio (skipped for --epub-only) and images.
-    console.print(f"Downloading files for {len(conf_obj.talks)} talks...")
+    # download_conference() prints its own contextual message and skips silently
+    # if all files are already present.
     t0 = time.monotonic()
     try:
-        failed_talks: list[Talk] = download_conference(
+        dl_result: DownloadResult = download_conference(
             conf_obj, conf_output_dir, skip_audio=epub_only
         )
     except DownloadError as exc:
         click.echo(f"Error: Download failed: {exc}", err=True)
         sys.exit(1)
     phase_times["download"] = time.monotonic() - t0
+    failed_talks = dl_result.failed_talks
 
     m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
     epub_path = conf_output_dir / f"{conf_obj.title}.epub"
@@ -469,6 +477,7 @@ def _run(
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
+                    console=console,
                 ) as sp:
                     sp.add_task(f"Building EPUB: {conf_obj.title}")
                     build_epub(
