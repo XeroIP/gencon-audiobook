@@ -12,7 +12,7 @@ flowchart TD
         S3["Fetch conference listing"]
         S4["Parse Session / Talk stubs"]
         S5["Fetch each talk page"]
-        S6["Extract mp3_url, transcript_html,\nspeaker_image_url, inline_images, speaker name"]
+        S6["Extract mp3_url, transcript_html,\nspeaker_image_url, inline_images,\nfooter.notes footnote bodies, speaker name"]
         S1 --> S2 --> S3 --> S4 --> S5 --> S6
     end
 
@@ -57,7 +57,7 @@ flowchart TD
     end
 
     subgraph EPUB["epub_builder.py"]
-        E1["Sanitize transcripts\n(strip classes, data-*, materialize\nfootnote markers, unwrap links)"]
+        E1["Sanitize transcripts\n(strip classes, data-*, materialize footnote markers,\nunwrap links; preserve noteref via data-scroll-id;\nwrap ^note\\d+$ elements as epub:type=footnote)"]
         E2["Resize speaker photos\n(800px IIIF source → 300px embed)"]
         E3["Compose portrait cover\n(landscape source → 1200x1800 canvas)"]
         E4["Assemble EPUB 3 ZIP\n(verify with testzip after write)"]

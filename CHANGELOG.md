@@ -124,7 +124,8 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.4...v0.1.5

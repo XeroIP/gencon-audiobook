@@ -182,7 +182,7 @@ dependencies = [
     "requests>=2.28",          # HTTP client
     "beautifulsoup4>=4.11",    # HTML parsing (uses html.parser — NOT lxml)
     "mutagen>=1.47",           # Audio metadata verification only (NOT for chapter writing)
-    "Pillow>=9.0",             # Image processing (resize/convert speaker photos to JPEG)
+    "Pillow>=9.1",             # Image processing (resize/convert speaker photos to JPEG)
     "rich>=13.0",              # Progress bars and terminal output
     "static-ffmpeg>=2.7",      # Fallback ffmpeg download if not on system PATH
 ]
