@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-04-28
+
+### Fixed
+- EPUB footnotes now render correctly end-to-end. The scraper was discarding the
+  `<footer class="notes">` section (footnote bodies live outside `div.body-block`);
+  it now appends footer content to `transcript_html`. The EPUB builder was only
+  recognising bare `#noteN` fragment hrefs as note-refs, but the Church site
+  generates full talk-page URLs (e.g. `/study/general-conference/2024/04/31bowen?lang=eng#note1`);
+  these are now detected via `class="note-ref"` + `data-scroll-id` and normalised
+  to bare fragments before being marked `epub:type="noteref"`. Footnote-body
+  wrapping is tightened to `id` values matching `^note\d+$` only, preventing
+  section-heading (`note_title1`) and child-paragraph (`note1_p1`) elements from
+  being incorrectly wrapped as `<aside epub:type="footnote">`.
+
+### Changed
+- CI workflow now runs on both `main` and `dev` branches (push and pull_request).
+- `pip-audit` job ignores `CVE-2026-3219` (affects `pip` itself with no fix
+  version available at time of release).
+
+### Added
+- `build>=1.2` added to dev extras so `python -m build` works out of the box.
+- 6 new unit tests covering the footnote pipeline, including a ZIP-level
+  assertion that `epub:type="noteref"` and `epub:type="footnote"` appear in the
+  final EPUB output.
+- `tests/fixtures/talk_page_with_notes.html` — realistic Church HTML fixture
+  with `div.body-block` + `footer.notes` for regression testing.
+
 ## [0.1.7] - 2026-04-16
 
 ### Added
