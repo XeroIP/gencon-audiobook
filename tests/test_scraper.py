@@ -268,6 +268,28 @@ def test_parse_talk_page_deduplicates_inline_images():
     assert len(data["inline_images"]) == 1, "Duplicate asset_id should be deduplicated"
 
 
+def test_parse_talk_page_captures_footnote_bodies_from_footer():
+    """footer.notes content must appear in transcript_html so the EPUB builder can render it.
+
+    The Church site places footnote bodies in <footer class="notes"> as a sibling of
+    <div class="body-block">, not inside it. parse_talk_page() must capture both
+    so the EPUB builder has the note bodies it needs.
+    """
+    html = _load("talk_page_with_notes.html")
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/study/general-conference/2024/04/31bowen?lang=eng")
+    transcript = data["transcript_html"] or ""
+    assert 'id="note1"' in transcript, (
+        "Footnote body id='note1' must be present in transcript_html"
+    )
+    assert 'id="note2"' in transcript, (
+        "Footnote body id='note2' must be present in transcript_html"
+    )
+    # Verify note content survived
+    assert "Matthew 16" in transcript, (
+        "Footnote body text must be present in transcript_html"
+    )
+
+
 # ---------------------------------------------------------------------------
 # robots.txt (#23)
 # ---------------------------------------------------------------------------

@@ -254,26 +254,44 @@ def _sanitize_transcript(
                 del tag.attrs[attr]
 
     # Preserve internal footnote links as EPUB 3 noterefs; unwrap everything else.
-    # Links whose href starts with "#note" connect superscript markers to footnote
-    # bodies on the same page. Adding epub:type="noteref" lets modern e-readers
-    # (Apple Books, Kobo, Thorium) display the footnote as a dismissible popup.
-    # All other <a> tags (scripture refs, cross-refs) point outside the EPUB
-    # container (RSC-033, RSC-026) and must be unwrapped.
+    # The Church site generates note-ref links with class="note-ref" and a full talk-page
+    # URL ending in "#noteN" (e.g. href="/study/general-conference/2024/04/31bowen?lang=eng#note1").
+    # These must be normalized to bare fragment refs ("#noteN") and marked epub:type="noteref"
+    # so e-readers (Apple Books, Kobo, Thorium) can display the footnote as a dismissible popup.
+    # Bare "#noteN" hrefs (from synthetic or pre-normalized content) are also accepted.
+    # All other <a> tags (scripture refs, cross-refs) point outside the EPUB container
+    # (RSC-033, RSC-026) and must be unwrapped.
+    _NOTE_FRAGMENT_RE = re.compile(r"#(note\d+)$")
     for a_tag in soup.find_all("a"):
         href = str(a_tag.get("href") or "")
-        if href.startswith("#note"):
-            # Strip all attrs except href; add EPUB 3 noteref semantics.
-            a_tag.attrs = {"href": href, "epub:type": "noteref"}
+        scroll_id = str(a_tag.get("data-scroll-id") or "")
+        note_id: str | None = None
+        if scroll_id and re.match(r"^note\d+$", scroll_id):
+            # Canonical case: Church note-ref link with data-scroll-id="noteN"
+            note_id = scroll_id
+        elif href.startswith("#note") and re.match(r"^#note\d+$", href):
+            # Pre-normalized bare fragment ref
+            note_id = href[1:]
+        else:
+            # Check for full URL ending in #noteN fragment
+            m = _NOTE_FRAGMENT_RE.search(href)
+            if m and "note-ref" in (a_tag.get("class") or []):
+                note_id = m.group(1)
+        if note_id:
+            a_tag.attrs = {"href": f"#{note_id}", "epub:type": "noteref"}
         else:
             a_tag.unwrap()
 
     # Wrap footnote body elements in <aside epub:type="footnote">.
-    # The Church site uses id="note1", id="note2", etc. on <p> or <div> elements
-    # for the footnote content. Moving the id to the wrapping <aside> satisfies
-    # EPUB 3 structure: the noteref href="#note1" links to the aside, which the
-    # reader renders as a popup.
+    # The Church site uses id="note1", id="note2", etc. on <li> elements inside
+    # footer.notes for the footnote content. Moving the id to the wrapping <aside>
+    # satisfies EPUB 3 structure: the noteref href="#note1" links to the aside, which
+    # the reader renders as a popup.
+    # Only match ids of exactly the form "note" + digits (e.g. "note1", "note12").
+    # Do NOT match "note_title1" (section headings) or "note1_p1" (child elements).
+    _FOOTNOTE_ID_RE = re.compile(r"^note\d+$")
     for tag in soup.find_all(
-        lambda t: isinstance(t.get("id"), str) and t["id"].startswith("note")
+        lambda t: isinstance(t.get("id"), str) and bool(_FOOTNOTE_ID_RE.match(t["id"]))
     ):
         note_id = str(tag["id"])
         del tag["id"]
@@ -291,14 +309,16 @@ def _sanitize_transcript(
 
     # Strip data-* attributes (React/JS rendering artifacts), random web IDs
     # (e.g., id="p_fvoG6"), and web CSS class names that have no corresponding
-    # rules in the EPUB stylesheet. Preserve id attributes beginning with "note"
-    # (footnote anchors). <img> class attrs are already cleared above.
+    # rules in the EPUB stylesheet. Preserve only footnote anchor ids of the
+    # form "noteN" (e.g., "note1") on <aside> elements. <img> class attrs are
+    # already cleared above.
+    _FOOTNOTE_ASIDE_ID_RE = re.compile(r"^note\d+$")
     for tag in soup.find_all(True):
         data_attrs = [attr for attr in tag.attrs if attr.startswith("data-")]
         for attr in data_attrs:
             del tag[attr]
         tag_id = tag.get("id")
-        if isinstance(tag_id, str) and not tag_id.startswith("note"):
+        if isinstance(tag_id, str) and not _FOOTNOTE_ASIDE_ID_RE.match(tag_id):
             del tag["id"]
         if "class" in tag.attrs:
             del tag["class"]
