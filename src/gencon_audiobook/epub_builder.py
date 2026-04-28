@@ -18,6 +18,13 @@ from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
+# Footnote regex constants — compiled once at module load to avoid per-call overhead.
+# Match the "noteN" fragment at the end of any URL (used to normalize full Church URLs).
+_NOTE_FRAGMENT_RE = re.compile(r"#(note\d+)$")
+# Match a valid footnote anchor id: exactly "note" followed by one or more digits.
+# Excludes "note_title1" (section headings) and "note1_p1" (child paragraph IDs).
+_FOOTNOTE_ID_RE = re.compile(r"^note\d+$")
+
 _COPYRIGHT = (
     "Copyright {year} Intellectual Reserve, Inc. "
     "All rights reserved. For personal, noncommercial use only."
@@ -261,15 +268,14 @@ def _sanitize_transcript(
     # Bare "#noteN" hrefs (from synthetic or pre-normalized content) are also accepted.
     # All other <a> tags (scripture refs, cross-refs) point outside the EPUB container
     # (RSC-033, RSC-026) and must be unwrapped.
-    _NOTE_FRAGMENT_RE = re.compile(r"#(note\d+)$")
     for a_tag in soup.find_all("a"):
         href = str(a_tag.get("href") or "")
         scroll_id = str(a_tag.get("data-scroll-id") or "")
         note_id: str | None = None
-        if scroll_id and re.match(r"^note\d+$", scroll_id):
+        if scroll_id and _FOOTNOTE_ID_RE.match(scroll_id):
             # Canonical case: Church note-ref link with data-scroll-id="noteN"
             note_id = scroll_id
-        elif href.startswith("#note") and re.match(r"^#note\d+$", href):
+        elif href.startswith("#note") and _FOOTNOTE_ID_RE.match(href[1:]):
             # Pre-normalized bare fragment ref
             note_id = href[1:]
         else:
@@ -289,7 +295,6 @@ def _sanitize_transcript(
     # the reader renders as a popup.
     # Only match ids of exactly the form "note" + digits (e.g. "note1", "note12").
     # Do NOT match "note_title1" (section headings) or "note1_p1" (child elements).
-    _FOOTNOTE_ID_RE = re.compile(r"^note\d+$")
     for tag in soup.find_all(
         lambda t: isinstance(t.get("id"), str) and bool(_FOOTNOTE_ID_RE.match(t["id"]))
     ):
@@ -312,13 +317,12 @@ def _sanitize_transcript(
     # rules in the EPUB stylesheet. Preserve only footnote anchor ids of the
     # form "noteN" (e.g., "note1") on <aside> elements. <img> class attrs are
     # already cleared above.
-    _FOOTNOTE_ASIDE_ID_RE = re.compile(r"^note\d+$")
     for tag in soup.find_all(True):
         data_attrs = [attr for attr in tag.attrs if attr.startswith("data-")]
         for attr in data_attrs:
             del tag[attr]
         tag_id = tag.get("id")
-        if isinstance(tag_id, str) and not _FOOTNOTE_ASIDE_ID_RE.match(tag_id):
+        if isinstance(tag_id, str) and not _FOOTNOTE_ID_RE.match(tag_id):
             del tag["id"]
         if "class" in tag.attrs:
             del tag["class"]
