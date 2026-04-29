@@ -180,9 +180,9 @@ requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",              # CLI framework
     "requests>=2.28",          # HTTP client
-    "beautifulsoup4>=4.11",    # HTML parsing (uses html.parser — NOT lxml)
+    "beautifulsoup4>=4.12",    # HTML parsing (uses html.parser — NOT lxml)
     "mutagen>=1.47",           # Audio metadata verification only (NOT for chapter writing)
-    "Pillow>=9.1",             # Image processing (resize/convert speaker photos to JPEG)
+    "Pillow>=10.0",            # Image processing (resize/convert speaker photos to JPEG)
     "rich>=13.0",              # Progress bars and terminal output
     "static-ffmpeg>=2.7",      # Fallback ffmpeg download if not on system PATH
 ]
