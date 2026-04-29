@@ -311,7 +311,7 @@ def _format_duration(seconds: float) -> str:
 
 
 def _print_completion_report(
-    conf_title: str,
+    conference: Conference,
     conf_output_dir: Path,
     m4b_path: Path,
     epub_path: Path,
@@ -322,7 +322,7 @@ def _print_completion_report(
     """Print a structured completion report to the console.
 
     Args:
-        conf_title: Human-readable conference title.
+        conference: Conference metadata used for output names and session details.
         conf_output_dir: Conference output directory.
         m4b_path: Path to the built m4b file (may not exist if epub-only).
         epub_path: Path to the built epub file (may not exist if audiobook-only).
@@ -332,7 +332,10 @@ def _print_completion_report(
     """
     console.print("")
     console.print("--- Completion Report ---")
-    console.print(f"  Conference:    {conf_title}")
+    console.print(f"  Conference:    {conference.title}")
+    console.print(f"  Sessions:      {len(conference.sessions)}")
+    for session in conference.sessions:
+        console.print(f"    - {session.name}")
 
     if stats is not None:
         console.print(f"  Duration:      {_format_duration(stats.duration_seconds)}")
@@ -626,7 +629,7 @@ def _run(
             phase_times["epub"] = time.monotonic() - t0
 
     _print_completion_report(
-        conf_title=conf_obj.title,
+        conference=conf_obj,
         conf_output_dir=conf_output_dir,
         m4b_path=m4b_path,
         epub_path=epub_path,
