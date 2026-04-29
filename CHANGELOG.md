@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-29
+
+### Added
+- `--prefer-video-audio` flag: when a conference's 360p video audio is better than the MP3 source, the tool can extract the 96 kbps AAC track from video instead of downloading lower-quality MP3 audio. The default run warns before downloading, the opt-in path shows estimated download/audio-cache sizes, and newer conferences with better MP3 audio are protected from downgrade.
+- EPUB table-of-contents entries now include speaker names.
+- Completion reports now include session count and session names.
+
+### Fixed
+- Scraper fetches now enforce robots.txt through the shared `_fetch()` path, matching the documented behavior.
+
 ## [0.1.7] - 2026-04-16
 
 ### Added
@@ -124,7 +134,8 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...v0.1.6

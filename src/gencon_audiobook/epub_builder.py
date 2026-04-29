@@ -607,7 +607,8 @@ def _nav_xhtml(
         toc.append('      <ol>')
         for talk in session.talks:
             href = talk_hrefs[talk.talk_index]
-            toc.append(f'        <li><a href="{href}">{escape(talk.title)}</a></li>')
+            label = f"{talk.title} -- {talk.speaker}" if talk.speaker else talk.title
+            toc.append(f'        <li><a href="{href}">{escape(label)}</a></li>')
         toc.append('      </ol>')
         toc.append('    </li>')
     toc += ['  </ol>', '</nav>']

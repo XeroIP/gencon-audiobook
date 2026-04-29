@@ -24,7 +24,7 @@ test-release\Scripts\activate
 # Mac/Linux:
 source test-release/bin/activate
 
-pip install gencon-audiobook==0.1.8   # replace with the version being tested
+pip install gencon-audiobook==0.2.0   # replace with the version being tested
 ```
 
 Verify the entry point and version:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -14,7 +15,9 @@ from gencon_audiobook.downloader import (
     DownloadError,
     DownloadResult,
     _audio_path,
+    _probe_audio_info,
     _speaker_path,
+    _video_audio_path,
     cleanup_tmp_files,
     download_conference,
     download_file,
@@ -23,6 +26,7 @@ from gencon_audiobook.models import Conference, Session, Talk
 
 _ALLOWED_URL = "https://assets.churchofjesuschrist.org/test.mp3"
 _ALLOWED_IMG = "https://assets.churchofjesuschrist.org/test.jpg"
+_ALLOWED_VIDEO = "https://assets.churchofjesuschrist.org/testslug-360p-en.mp4"
 _BLOCKED_URL = "https://evil.example.com/test.mp3"
 
 
@@ -267,6 +271,35 @@ def test_speaker_path_format(tmp_path: Path) -> None:
     assert path.parent == tmp_path / "speakers"
 
 
+def test_video_audio_path_format(tmp_path: Path) -> None:
+    talk = Talk(
+        title="Welcome to Conference",
+        speaker="John Smith",
+        talk_url="https://www.churchofjesuschrist.org/t",
+        talk_index=7,
+    )
+    path = _video_audio_path(tmp_path, talk)
+    assert path.name == "007-Welcome-to-Conference.m4a", f"Unexpected name: {path.name!r}"
+    assert path.parent == tmp_path / "audio"
+
+
+def test_probe_audio_info_parses_ffprobe_json() -> None:
+    result = MagicMock()
+    result.stdout = """
+    {
+      "streams": [{"bit_rate": "96000", "duration": "600.0"}],
+      "format": {"bit_rate": "600000", "duration": "600.0"}
+    }
+    """
+
+    with patch("gencon_audiobook.downloader.subprocess.run", return_value=result):
+        probe = _probe_audio_info(_ALLOWED_VIDEO, Path("ffprobe"))
+
+    assert probe.audio_bitrate_bps == 96_000
+    assert probe.duration_seconds == 600.0
+    assert probe.total_bitrate_bps == 600_000
+
+
 # ---------------------------------------------------------------------------
 # download_conference — integration of the full download queue
 # ---------------------------------------------------------------------------
@@ -295,6 +328,41 @@ def _make_single_talk_conference() -> Conference:
         sessions=[session],
         conference_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04",
     )
+
+
+def test_download_conference_extracts_video_audio_when_preferred(tmp_path: Path) -> None:
+    conference = _make_single_talk_conference()
+    conference.talks[0].video_url = _ALLOWED_VIDEO
+
+    with patch("gencon_audiobook.downloader._extract_video_audio", return_value=True) as mock_extract:
+        result = download_conference(
+            conference,
+            tmp_path,
+            delay=0,
+            prefer_video_audio=True,
+            ffmpeg_path=Path("ffmpeg"),
+        )
+
+    expected_dest = tmp_path / "audio" / "001-Test-Talk.m4a"
+    mock_extract.assert_called_once_with(_ALLOWED_VIDEO, expected_dest, Path("ffmpeg"))
+    assert result.downloaded == 1
+
+
+@rsps_lib.activate
+def test_download_conference_prefers_mp3_when_video_missing(tmp_path: Path) -> None:
+    rsps_lib.add(rsps_lib.GET, _MP3_URL, body=_small_mp3(), status=200)
+    conference = _make_single_talk_conference()
+
+    result = download_conference(
+        conference,
+        tmp_path,
+        delay=0,
+        prefer_video_audio=True,
+        ffmpeg_path=Path("ffmpeg"),
+    )
+
+    assert (tmp_path / "audio" / "001-Test-Talk.mp3").exists()
+    assert result.downloaded == 1
 
 
 @rsps_lib.activate

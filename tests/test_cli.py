@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 from gencon_audiobook.audio import AudioError
 from gencon_audiobook.cli import main, _LOG_FILENAME
-from gencon_audiobook.downloader import DownloadError
+from gencon_audiobook.downloader import AudioProbe, DownloadError, DownloadResult
 from gencon_audiobook.models import Conference, Session, Talk
 from gencon_audiobook.scraper import ConferenceRef, ScraperError
 
@@ -30,12 +30,13 @@ def _make_ref(title: str = "April 2024 General Conference", year: int = 2024, mo
     )
 
 
-def _make_conference(title: str = "April 2024 General Conference") -> Conference:
+def _make_conference(title: str = "April 2024 General Conference", *, video_url: str | None = None) -> Conference:
     talk = Talk(
         title="Opening Remarks",
         speaker="President Eyring",
         talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/01",
         mp3_url="https://assets.churchofjesuschrist.org/test.mp3",
+        video_url=video_url,
         talk_index=1,
         duration_seconds=120.0,
     )
@@ -353,6 +354,8 @@ def test_completion_summary_printed(tmp_path: Path) -> None:
         result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
 
     assert "Completion Report" in result.output, result.output
+    assert "Sessions:" in result.output, result.output
+    assert "Saturday Morning Session" in result.output, result.output
     assert "Audiobook:" in result.output, result.output
 
 
@@ -601,3 +604,98 @@ def test_explicit_bitrate_passed_to_build_m4b(tmp_path: Path) -> None:
         f"Expected bitrate='48k', got {kwargs.get('bitrate')!r}"
     assert kwargs.get("sample_rate") == 22050, \
         f"Expected sample_rate=22050, got {kwargs.get('sample_rate')!r}"
+
+
+def test_quality_banner_exits_by_default_when_video_audio_is_better(tmp_path: Path) -> None:
+    conference = _make_conference(
+        video_url="https://assets.churchofjesuschrist.org/video-360p-en.mp4"
+    )
+
+    with (
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli._probe_audio_info", side_effect=[
+            AudioProbe(audio_bitrate_bps=32_000, duration_seconds=600.0, total_bitrate_bps=32_000),
+            AudioProbe(audio_bitrate_bps=96_000, duration_seconds=600.0, total_bitrate_bps=600_000),
+        ]),
+        patch("gencon_audiobook.cli.download_conference") as mock_download,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["--output", str(tmp_path), "--audiobook-only", "--conference", "2024-04"],
+            input="\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Higher quality audio is available" in result.output
+    mock_download.assert_not_called()
+
+
+def test_prefer_video_audio_prompts_with_estimates_and_enables_extraction(tmp_path: Path) -> None:
+    conference = _make_conference(
+        video_url="https://assets.churchofjesuschrist.org/video-360p-en.mp4"
+    )
+
+    with (
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli._probe_audio_info", side_effect=[
+            AudioProbe(audio_bitrate_bps=32_000, duration_seconds=600.0, total_bitrate_bps=32_000),
+            AudioProbe(audio_bitrate_bps=96_000, duration_seconds=600.0, total_bitrate_bps=600_000),
+        ]),
+        patch("gencon_audiobook.cli.download_conference", return_value=DownloadResult()) as mock_download,
+        patch("gencon_audiobook.cli.build_m4b"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "--output", str(tmp_path),
+                "--audiobook-only",
+                "--conference", "2024-04",
+                "--prefer-video-audio",
+            ],
+            input="y\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "--prefer-video-audio is active" in result.output
+    assert "Estimated download" in result.output
+    assert mock_download.call_args.kwargs["prefer_video_audio"] is True
+
+
+def test_prefer_video_audio_does_not_downgrade_better_mp3(tmp_path: Path) -> None:
+    conference = _make_conference(
+        video_url="https://assets.churchofjesuschrist.org/video-360p-en.mp4"
+    )
+
+    with (
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli._probe_audio_info", side_effect=[
+            AudioProbe(audio_bitrate_bps=128_000, duration_seconds=600.0, total_bitrate_bps=128_000),
+            AudioProbe(audio_bitrate_bps=96_000, duration_seconds=600.0, total_bitrate_bps=600_000),
+        ]),
+        patch("gencon_audiobook.cli.download_conference", return_value=DownloadResult()) as mock_download,
+        patch("gencon_audiobook.cli.build_m4b"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "--output", str(tmp_path),
+                "--audiobook-only",
+                "--conference", "2024-04",
+                "--prefer-video-audio",
+            ],
+            input="\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "MP3 source is already equal" in result.output
+    assert "better for this conference" in result.output
+    assert mock_download.call_args.kwargs["prefer_video_audio"] is False

@@ -376,6 +376,16 @@ def test_build_epub_talk_titles_in_nav(tmp_path: Path) -> None:
         assert talk.title in nav, f"Talk title {talk.title!r} not found in nav.xhtml"
 
 
+def test_build_epub_talk_speakers_in_nav(tmp_path: Path) -> None:
+    conference = _make_conference(n_talks=3)
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+    nav = _epub_read(output, "nav.xhtml").decode("utf-8")
+    for talk in conference.talks:
+        expected = f"{talk.title} -- {talk.speaker}"
+        assert expected in nav, f"TOC entry {expected!r} not found in nav.xhtml"
+
+
 def test_build_epub_sessions_in_nav(tmp_path: Path) -> None:
     conference = _make_conference(n_talks=4)
     output = tmp_path / "test.epub"
@@ -823,6 +833,19 @@ def test_build_epub_title_with_special_chars_escaped(tmp_path: Path) -> None:
     assert "&amp;" in page, "Ampersand in title must be HTML-escaped as &amp;"
     assert "<Elder" not in page, "Unescaped angle bracket in speaker name must not appear"
     assert "<Test>" not in page, "Unescaped angle brackets must not appear in XHTML"
+
+
+def test_build_epub_nav_speaker_label_escaped(tmp_path: Path) -> None:
+    conference = _make_conference(n_talks=1)
+    conference.talks[0].title = "Faith & Works"
+    conference.talks[0].speaker = "Elder A. <Test>"
+
+    output = tmp_path / "test.epub"
+    build_epub(conference, tmp_path, output)
+
+    nav = _epub_read(output, "nav.xhtml").decode("utf-8")
+    assert "Faith &amp; Works -- Elder A. &lt;Test&gt;" in nav
+    assert "<Test>" not in nav, "TOC speaker label must be escaped"
 
 
 # ---------------------------------------------------------------------------

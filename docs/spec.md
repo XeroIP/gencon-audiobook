@@ -23,6 +23,7 @@ gencon-audiobook --overwrite              # Overwrite existing output files
 gencon-audiobook --force-scrape           # Bypass conference.json cache, re-scrape from website
 gencon-audiobook --bitrate 32k --sample-rate 22050
 gencon-audiobook --epub-paragraph-numbers # Add paragraph numbers to EPUB transcripts
+gencon-audiobook --prefer-video-audio     # Extract better AAC audio from video when MP3 is worse
 ```
 
 ## Output Structure
@@ -35,7 +36,7 @@ gencon-audiobook --epub-paragraph-numbers # Add paragraph numbers to EPUB transc
   conference.json                       # Cached conference metadata (skip re-scraping on rerun)
   audio/                                # Downloaded and converted audio
     001-sanitized-title.mp3             # Zero-padded talk_index, sanitized title
-    001-sanitized-title.m4a             # Intermediate AAC (deleted after m4b is built)
+    001-sanitized-title.m4a             # Extracted video AAC cache, or temporary converted AAC
     ...
   speakers/                             # Speaker photos (for reference and epub)
     001-speaker-name.jpg                # Zero-padded talk_index, sanitized speaker name
@@ -62,6 +63,7 @@ that both `downloader.py` and `audio.py` can compute independently from the Talk
 | ffmpeg sourcing | System PATH first, then `static-ffmpeg` fallback | Users with ffmpeg already installed (most Linux/macOS users) get zero overhead. New users get automatic download. |
 | m4b chapters | ffmpeg FFMETADATA1 format | Only reliable method for writing MP4 chapter atoms. Mutagen used for post-creation verification only — mutagen cannot write chapters. |
 | m4b audio | AAC-LC, source-matched bitrate/sample-rate, mono | Maximum compatibility across iOS and Android. HE-AAC has spotty Android support. Mono is correct for speech. Source quality is preserved by default; `--bitrate` and `--sample-rate` flags override. |
+| Video audio upgrade | Opt-in `--prefer-video-audio` after measured ffprobe comparison | Older MP3s can be 32-64 kbps while 360p video carries 96 kbps AAC. The default run warns and exits before slow downloads; the opt-in path shows size estimates and refuses to downgrade 128 kbps MP3 conferences. |
 | m4b cover | Book-level JPEG only | Per-chapter images not reliably rendered by any player. |
 | m4b chapters | `"Talk Title -- Speaker Name"` | MP4 chapter spec has no author field; speaker name embedded in title with em-dash separator. |
 | EPUB generation | Manual ZIP of XHTML | `ebooklib` is unmaintained (last release 2022), has 100+ open bugs, and produces non-compliant EPUB 3 output. Manual generation gives full control and reliable epubcheck compliance. |
@@ -95,6 +97,7 @@ churchofjesuschrist.org
   downloader.py  ----------------------------->  output_dir/
   (images: parallel via ThreadPoolExecutor)       |-- audio/*.mp3
   (audio: sequential, 0.5s delay)                 |-- cover.jpg
+  (optional video audio extraction)               |-- audio/*.m4a
   (.tmp + rename, resume, retry/backoff)          |-- speakers/*.jpg
   (JPEG conversion via Pillow)                    +-- inline/*.jpg
   (IIIF URLs rewritten to 800px resolution)
@@ -139,6 +142,7 @@ class Talk:
     speaker: str
     talk_url: str
     mp3_url: str | None = None
+    video_url: str | None = None
     transcript_html: str | None = None
     speaker_image_url: str | None = None
     inline_images: list[InlineImage] = field(default_factory=list)  # body images from transcript
@@ -180,9 +184,9 @@ requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",              # CLI framework
     "requests>=2.28",          # HTTP client
-    "beautifulsoup4>=4.11",    # HTML parsing (uses html.parser — NOT lxml)
+    "beautifulsoup4>=4.12",    # HTML parsing (uses html.parser — NOT lxml)
     "mutagen>=1.47",           # Audio metadata verification only (NOT for chapter writing)
-    "Pillow>=9.1",             # Image processing (resize/convert speaker photos to JPEG)
+    "Pillow>=10.0",            # Image processing (resize/convert speaker photos to JPEG)
     "rich>=13.0",              # Progress bars and terminal output
     "static-ffmpeg>=2.7",      # Fallback ffmpeg download if not on system PATH
 ]

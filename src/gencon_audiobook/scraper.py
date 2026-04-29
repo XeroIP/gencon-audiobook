@@ -67,6 +67,10 @@ _CONF_URL_RE = re.compile(
     r"/study/general-conference/\d{4}/\d{2}/[a-z0-9][-a-z0-9]*(?:\?|$)",
     re.IGNORECASE,
 )
+_VIDEO_360P_RE = re.compile(
+    r"https://assets\.churchofjesuschrist\.org/[a-z0-9]+-360p-en\.mp4",
+    re.IGNORECASE,
+)
 
 
 # Cache of parsed RobotFileParser objects, keyed by scheme+host (e.g. "https://www.churchofjesuschrist.org")
@@ -238,6 +242,7 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
     """
     if not validate_url(url):
         raise ScraperError(f"URL not on allowlist: {url}")
+    _check_robots(http, url)
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
@@ -344,6 +349,16 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
             logger.debug("Failed to parse __INITIAL_STATE__ as raw JSON: %s", exc)
 
     return {}
+
+
+def _find_video_url(state: dict[str, Any]) -> str | None:
+    """Find a 360p MP4 URL anywhere in decoded page state."""
+    state_text = json.dumps(state, ensure_ascii=False)
+    match = _VIDEO_360P_RE.search(state_text)
+    if not match:
+        return None
+    video_url = match.group(0)
+    return video_url if validate_url(video_url) else None
 
 
 # ---------------------------------------------------------------------------
@@ -739,20 +754,21 @@ def _sessions_from_html(html: str) -> list[Session]:
 
 
 def parse_talk_page(html: str, talk_url: str) -> dict:
-    """Extract mp3_url, transcript_html, speaker_image_url, speaker, and inline_images from a talk page.
+    """Extract media, transcript, speaker, and inline images from a talk page.
 
     Args:
         html: HTML content of the individual talk page.
         talk_url: URL of this talk page (used only for logging).
 
     Returns:
-        Dict with keys: mp3_url, transcript_html, speaker_image_url, speaker,
-        inline_images. String values may be None if not found; inline_images
-        is always a list (possibly empty).
+        Dict with keys: mp3_url, video_url, transcript_html, speaker_image_url,
+        speaker, inline_images. String values may be None if not found;
+        inline_images is always a list (possibly empty).
     """
     soup = BeautifulSoup(html, "html.parser")
     result: dict = {
         "mp3_url": None,
+        "video_url": None,
         "transcript_html": None,
         "speaker_image_url": None,
         "speaker": None,
@@ -762,6 +778,10 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
     # MP3 URL — primary: reader.contentStore[*].meta.audio[0].mediaUrl in __INITIAL_STATE__
     # The Church website embeds the audio URL in JS state; the HTML player is rendered client-side.
     state = _parse_initial_state(html)
+    result["video_url"] = _find_video_url(state)
+    if result["video_url"]:
+        logger.debug("video_url (state scan): %s", result["video_url"])
+
     content_store = state.get("reader", {}).get("contentStore", {})
     for _key, entry in content_store.items():
         audio_list = entry.get("meta", {}).get("audio", [])
@@ -1000,6 +1020,7 @@ def scrape_conference(conference_url: str) -> Conference:
                     talk.speaker = data["speaker"]
 
                 talk.mp3_url = data["mp3_url"]
+                talk.video_url = data["video_url"]
                 talk.transcript_html = data["transcript_html"]
                 talk.speaker_image_url = data["speaker_image_url"]
                 talk.inline_images = data["inline_images"]
