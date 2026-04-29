@@ -238,6 +238,7 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
     """
     if not validate_url(url):
         raise ScraperError(f"URL not on allowlist: {url}")
+    _check_robots(http, url)
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):

@@ -250,6 +250,33 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
     )
 
 
+@requires_ffmpeg
+def test_build_m4b_skips_talk_when_conversion_fails(tmp_path: Path) -> None:
+    """A mid-build conversion failure must not create a ghost chapter."""
+    from unittest.mock import patch
+
+    import gencon_audiobook.audio as audio_module
+
+    conference = _make_conference(tmp_path, n_talks=2)
+    audio_dir = tmp_path / "audio"
+    output = tmp_path / "output.m4b"
+    original_convert = audio_module.convert_mp3_to_aac
+
+    def convert_or_fail(*args, **kwargs):
+        mp3_path = args[0]
+        if mp3_path.name.startswith("002-"):
+            raise AudioError("simulated conversion failure")
+        return original_convert(*args, **kwargs)
+
+    with patch("gencon_audiobook.audio.convert_mp3_to_aac", side_effect=convert_or_fail):
+        stats = build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    assert output.exists(), "m4b should still be produced when one conversion fails"
+    assert stats.chapter_count == 1, "Failed talk must not appear as a ghost chapter"
+    assert conference.talks[0].duration_seconds > 0
+    assert conference.talks[1].duration_seconds == 0.0
+
+
 # ---------------------------------------------------------------------------
 # _ffmeta_escape — pure function tests
 # ---------------------------------------------------------------------------

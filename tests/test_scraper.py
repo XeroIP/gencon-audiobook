@@ -307,6 +307,17 @@ def _make_http_session(robots_text: str, status: int = 200) -> MagicMock:
     return session
 
 
+def _add_robots_response(body: str = "User-agent: *\nDisallow:\n") -> None:
+    """Register an allow-all robots.txt response for _fetch tests."""
+    reset_robots_cache()
+    responses_lib.add(
+        responses_lib.GET,
+        "https://www.churchofjesuschrist.org/robots.txt",
+        status=200,
+        body=body,
+    )
+
+
 def test_check_robots_allows_permitted_url() -> None:
     """A URL permitted by robots.txt must not raise."""
     robots_text = "User-agent: *\nDisallow: /private/\n"
@@ -385,6 +396,7 @@ def test_fetch_retries_on_429_then_succeeds() -> None:
     url = "https://www.churchofjesuschrist.org/study/general-conference"
     minimal_html = "<html><body>" + "x" * 1200 + "</body></html>"
 
+    _add_robots_response()
     responses_lib.add(responses_lib.GET, url, status=429, body="Too Many Requests")
     responses_lib.add(responses_lib.GET, url, status=200, body=minimal_html)
 
@@ -402,6 +414,7 @@ def test_fetch_403_raises_immediately_without_retry() -> None:
     from gencon_audiobook.scraper import _fetch
 
     url = "https://www.churchofjesuschrist.org/study/general-conference"
+    _add_robots_response()
     responses_lib.add(responses_lib.GET, url, status=403, body="Forbidden")
     # Only one response registered — if retry occurs, responses_lib raises ConnectionError
 
@@ -410,9 +423,28 @@ def test_fetch_403_raises_immediately_without_retry() -> None:
         with pytest.raises(ScraperError, match="403"):
             _fetch(session, url)
 
-    assert len(responses_lib.calls) == 1, (
-        f"403 must not be retried — expected 1 request, got {len(responses_lib.calls)}"
+    assert len(responses_lib.calls) == 2, (
+        f"403 must not be retried — expected robots + 1 request, got {len(responses_lib.calls)}"
     )
+
+
+@responses_lib.activate
+def test_fetch_enforces_robots_txt_before_request() -> None:
+    """_fetch must enforce robots.txt, not just direct _check_robots() calls."""
+    from gencon_audiobook.scraper import _fetch
+
+    url = "https://www.churchofjesuschrist.org/study/general-conference/2024/04"
+    _add_robots_response("User-agent: *\nDisallow: /study/general-conference/\n")
+    responses_lib.add(responses_lib.GET, url, status=200, body="x" * 1200)
+
+    session = _scraper_make_session()
+    with pytest.raises(ScraperError, match="disallowed by robots.txt"):
+        _fetch(session, url)
+
+    assert len(responses_lib.calls) == 1, (
+        "_fetch should stop after robots.txt and never request a disallowed page"
+    )
+    assert responses_lib.calls[0].request.url.endswith("/robots.txt")
 
 
 # ---------------------------------------------------------------------------

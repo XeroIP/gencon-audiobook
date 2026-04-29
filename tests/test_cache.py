@@ -138,6 +138,24 @@ def test_load_cache_corrupt_json(tmp_path: "pytest.TempPathFactory") -> None:
     assert result is None, "Expected None for corrupt JSON"
 
 
+def test_load_cache_malformed_conference_data(tmp_path: "pytest.TempPathFactory") -> None:
+    """Valid JSON with an invalid conference shape must fall back to re-scraping."""
+    expected_url = "https://www.churchofjesuschrist.org/study/general-conference/2024/04"
+    malformed = {
+        "cache_version": CACHE_VERSION,
+        "conference": {
+            "conference_url": expected_url,
+            "title": "April 2024 General Conference",
+            # Missing sessions/year/month/cover_image_url.
+        },
+    }
+    (tmp_path / CACHE_FILENAME).write_text(json.dumps(malformed), encoding="utf-8")
+
+    result = load_cache(tmp_path, expected_url=expected_url)
+
+    assert result is None, "Expected None for malformed conference cache data"
+
+
 def test_load_cache_version_mismatch(tmp_path: "pytest.TempPathFactory") -> None:
     """load_cache returns None when cache_version does not match CACHE_VERSION."""
     conf = _make_conference()
