@@ -277,6 +277,24 @@ def test_build_m4b_skips_talk_when_conversion_fails(tmp_path: Path) -> None:
     assert conference.talks[1].duration_seconds == 0.0
 
 
+@requires_ffmpeg
+def test_build_m4b_uses_existing_m4a_without_deleting_it(tmp_path: Path) -> None:
+    conference = _make_conference(tmp_path, n_talks=1)
+    audio_dir = tmp_path / "audio"
+    mp3_path = audio_dir / "001-Talk-1.mp3"
+    m4a_path = mp3_path.with_suffix(".m4a")
+    output = tmp_path / "output.m4b"
+
+    convert_mp3_to_aac(mp3_path, m4a_path, _FFMPEG, _FFPROBE)
+    mp3_path.unlink()
+
+    stats = build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    assert output.exists(), "m4b should be produced from existing .m4a source"
+    assert m4a_path.exists(), "Extracted video audio cache must not be deleted"
+    assert stats.chapter_count == 1
+
+
 # ---------------------------------------------------------------------------
 # _ffmeta_escape — pure function tests
 # ---------------------------------------------------------------------------

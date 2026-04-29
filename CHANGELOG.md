@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--prefer-video-audio` flag: when a conference's 360p video audio is better than the MP3 source, the tool can extract the 96 kbps AAC track from video instead of downloading lower-quality MP3 audio. The default run warns before downloading, the opt-in path shows estimated download/audio-cache sizes, and newer conferences with better MP3 audio are protected from downgrade.
+
+### Fixed
+- Scraper fetches now enforce robots.txt through the shared `_fetch()` path, matching the documented behavior.
+
 ## [0.1.7] - 2026-04-16
 
 ### Added

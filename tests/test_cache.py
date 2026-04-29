@@ -32,6 +32,7 @@ def _make_conference() -> Conference:
         speaker="President Henry B. Eyring",
         talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/talk1",
         mp3_url="https://assets.churchofjesuschrist.org/audio/talk1.mp3",
+        video_url="https://assets.churchofjesuschrist.org/video/talk1-360p-en.mp4",
         transcript_html="<p>Welcome.</p>",
         speaker_image_url="https://assets.churchofjesuschrist.org/photo1.jpg",
         inline_images=[inline],
@@ -46,6 +47,7 @@ def _make_conference() -> Conference:
         speaker="Elder Test Speaker",
         talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/talk2",
         mp3_url=None,
+        video_url=None,
         transcript_html=None,
         speaker_image_url=None,
         inline_images=[],
@@ -95,6 +97,7 @@ def test_save_load_round_trip(tmp_path: "pytest.TempPathFactory") -> None:
     assert loaded_talk.speaker == orig_talk.speaker
     assert loaded_talk.talk_url == orig_talk.talk_url
     assert loaded_talk.mp3_url == orig_talk.mp3_url
+    assert loaded_talk.video_url == orig_talk.video_url
     assert loaded_talk.transcript_html == orig_talk.transcript_html
     assert loaded_talk.speaker_image_url == orig_talk.speaker_image_url
     assert loaded_talk.session_name == orig_talk.session_name

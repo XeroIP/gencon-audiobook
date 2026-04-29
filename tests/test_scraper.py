@@ -6,6 +6,8 @@ or after the Church website structure changes.
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -155,6 +157,39 @@ def test_parse_talk_page_mp3_url_passes_validate_url():
     assert data["mp3_url"] is not None
     assert validate_url(data["mp3_url"]), \
         f"mp3_url should pass validate_url(), got {data['mp3_url']!r}"
+
+
+def test_parse_talk_page_extracts_video_url_from_decoded_state():
+    video_url = "https://assets.churchofjesuschrist.org/utshiqnoy1y8xchu1tdwi860yku3zl2jw56xcbbx-360p-en.mp4"
+    state = {
+        "reader": {
+            "contentStore": {
+                "talk": {
+                    "meta": {
+                        "audio": [{"mediaUrl": "https://assets.churchofjesuschrist.org/audio-32k-en.mp3"}],
+                        "video": [{"mediaUrl": video_url}],
+                    }
+                }
+            }
+        }
+    }
+    encoded = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+    html = f'<html><body><script>window.__INITIAL_STATE__ = "{encoded}"</script></body></html>'
+
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+
+    assert data["video_url"] == video_url
+
+
+def test_parse_talk_page_video_url_regex_accepts_uppercase_hash():
+    video_url = "https://assets.churchofjesuschrist.org/59C8428CEF2EDDFAB2352EF6F3011D57B4772C28-360p-en.mp4"
+    state = {"video": {"url": video_url}}
+    encoded = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+    html = f'<html><body><script>window.__INITIAL_STATE__ = "{encoded}"</script></body></html>'
+
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+
+    assert data["video_url"] == video_url
 
 
 def test_parse_talk_page_extracts_transcript():

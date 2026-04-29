@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 _DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB chunks for streaming downloads
 _JPEG_QUALITY = 85              # JPEG quality for converted images
 _IMAGE_WORKERS = 8              # concurrent image download threads
+_VIDEO_EXTRACT_TIMEOUT = 60 * 60 * 2
 
 # Thread-local storage so each worker gets its own requests.Session.
 # requests.Session is NOT thread-safe; sharing one across threads causes
@@ -42,6 +45,73 @@ class DownloadResult:
     failed_talks: list[Talk] = field(default_factory=list)
     downloaded: int = 0
     skipped: int = 0
+
+
+@dataclass(frozen=True)
+class AudioProbe:
+    """Remote media probe details needed for quality comparison and estimates."""
+
+    audio_bitrate_bps: int | None
+    duration_seconds: float | None
+    total_bitrate_bps: int | None
+
+
+def _probe_audio_info(url: str, ffprobe_path: Path) -> AudioProbe:
+    """Probe a remote media URL with ffprobe.
+
+    ffprobe uses HTTP range requests for MP3/MP4 metadata, so this does not
+    download the full file.
+    """
+    if not validate_url(url):
+        raise ValueError(f"URL not on allowlist: {url!r}")
+
+    try:
+        result = subprocess.run(
+            [
+                str(ffprobe_path),
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-show_format",
+                "-select_streams", "a:0",
+                url,
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        data = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        raise DownloadError(f"ffprobe failed for {url!r}: {exc}") from exc
+    streams = data.get("streams", [])
+    audio_stream = streams[0] if streams else {}
+    fmt = data.get("format", {})
+
+    audio_bitrate = _parse_int(audio_stream.get("bit_rate"))
+    duration = _parse_float(audio_stream.get("duration")) or _parse_float(fmt.get("duration"))
+    total_bitrate = _parse_int(fmt.get("bit_rate")) or audio_bitrate
+    return AudioProbe(audio_bitrate, duration, total_bitrate)
+
+
+def _parse_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _parse_float(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 def download_file(
@@ -247,6 +317,56 @@ def _audio_path(output_dir: Path, talk: Talk) -> Path:
     return output_dir / "audio" / f"{talk.talk_index:03d}-{name}.mp3"
 
 
+def _video_audio_path(output_dir: Path, talk: Talk) -> Path:
+    """Return the destination path for extracted video audio."""
+    return _audio_path(output_dir, talk).with_suffix(".m4a")
+
+
+def _extract_video_audio(video_url: str, dest: Path, ffmpeg_path: Path) -> bool:
+    """Extract AAC audio from a remote MP4 video URL into dest."""
+    if not validate_url(video_url):
+        raise ValueError(f"URL not on allowlist: {video_url!r}")
+    if dest.exists():
+        logger.debug("Skipping video audio %s — already extracted", dest.name)
+        return False
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    cmd = [
+        str(ffmpeg_path),
+        "-nostdin",
+        "-i", video_url,
+        "-vn",
+        "-acodec", "copy",
+        "-y",
+        str(tmp),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_VIDEO_EXTRACT_TIMEOUT,
+        )
+        if result.returncode != 0:
+            raise DownloadError(
+                f"ffmpeg video audio extraction failed for {video_url!r}: "
+                f"{result.stderr[-2000:]}"
+            )
+        tmp.replace(dest)
+        return True
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DownloadError(f"Failed to extract video audio from {video_url!r}: {exc}") from exc
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def _speaker_path(output_dir: Path, talk: Talk) -> Path:
     """Return the destination path for a talk's speaker photo."""
     name = sanitize_filename(talk.speaker)
@@ -264,6 +384,8 @@ def download_conference(
     output_dir: Path,
     delay: float = 0.5,
     skip_audio: bool = False,
+    prefer_video_audio: bool = False,
+    ffmpeg_path: Path | None = None,
 ) -> DownloadResult:
     """Download all MP3s, cover image, and speaker photos for a conference.
 
@@ -277,12 +399,16 @@ def download_conference(
         output_dir: Directory to download into. Created if it doesn't exist.
         delay: Seconds to wait between audio HTTP requests.
         skip_audio: If True, skip MP3 downloads (for --epub-only mode).
+        prefer_video_audio: If True, extract audio from talk.video_url when present.
+        ffmpeg_path: Required when prefer_video_audio is True.
 
     Returns:
         DownloadResult with counts of downloaded/skipped files and any failed talks.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_tmp_files(output_dir)
+    if prefer_video_audio and ffmpeg_path is None:
+        raise ValueError("ffmpeg_path is required when prefer_video_audio=True")
 
     session = _make_session()
     talks = conference.talks
@@ -293,7 +419,10 @@ def download_conference(
 
     if not skip_audio:
         for talk in talks:
-            if talk.mp3_url:
+            if prefer_video_audio and talk.video_url:
+                dest = _video_audio_path(output_dir, talk)
+                queue.append((talk.video_url, dest, f"[video audio] {talk.title[:50]}", False, talk))
+            elif talk.mp3_url:
                 dest = _audio_path(output_dir, talk)
                 queue.append((talk.mp3_url, dest, f"[audio] {talk.title[:50]}", False, talk))
             else:
@@ -390,7 +519,11 @@ def download_conference(
         for url, dest, label, queue_talk in audio_queue:
             overall_progress.update(overall_task, description=label)
             try:
-                was_downloaded = download_file(url, dest, session, retries=3)
+                if dest.suffix == ".m4a":
+                    assert ffmpeg_path is not None
+                    was_downloaded = _extract_video_audio(url, dest, ffmpeg_path)
+                else:
+                    was_downloaded = download_file(url, dest, session, retries=3)
                 if was_downloaded:
                     downloaded += 1
                     time.sleep(delay)
