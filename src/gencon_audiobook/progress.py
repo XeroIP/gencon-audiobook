@@ -11,6 +11,7 @@ from rich.progress import (
     Task,
     TaskProgressColumn,
     TextColumn,
+    TimeElapsedColumn,
     TimeRemainingColumn,
 )
 from rich.text import Text
@@ -53,13 +54,14 @@ def standard_progress() -> Progress:
     All full-width progress bars (scrape, download, convert) use this factory
     so their columns are identical and visually aligned.
 
-    Column order: spinner | N/M count | bar | percent | time remaining | description
+    Column order: spinner | N/M count | bar | percent | elapsed | remaining | description
     """
     return Progress(
         SpinnerColumn(),
         ConditionalMofNColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeElapsedColumn(),
         TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
         console=shared_console,

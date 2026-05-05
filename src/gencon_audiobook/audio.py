@@ -13,10 +13,10 @@ from pathlib import Path
 
 from mutagen import MutagenError
 from mutagen.mp4 import MP4
-from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
+from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
 
 from .models import Conference, Talk
-from .progress import standard_progress
+from .progress import shared_console, standard_progress
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -745,6 +745,8 @@ def build_m4b(
         _spinner_progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=shared_console,
         )
         with _spinner_progress:
             _spinner_progress.add_task(f"Concatenating {len(aac_paths)} AAC files...")
@@ -788,6 +790,8 @@ def build_m4b(
         _spinner_progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=shared_console,
         )
         with _spinner_progress:
             _spinner_progress.add_task(f"Muxing m4b: {output_path.name}")
@@ -803,7 +807,12 @@ def build_m4b(
             logger.warning("Could not delete %s: %s", aac_path, exc)
 
     # Step 7: Verify
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=shared_console,
+    ) as sp:
         sp.add_task(f"Verifying m4b: {output_path.name}")
         _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)

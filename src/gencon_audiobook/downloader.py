@@ -48,6 +48,19 @@ class DownloadResult:
 
 
 @dataclass(frozen=True)
+class _DownloadItem:
+    """One queued download or extraction operation."""
+
+    url: str
+    dest: Path
+    label: str
+    is_image: bool
+    talk: Talk | None = None
+    fallback_url: str | None = None
+    fallback_dest: Path | None = None
+
+
+@dataclass(frozen=True)
 class AudioProbe:
     """Remote media probe details needed for quality comparison and estimates."""
 
@@ -338,6 +351,7 @@ def _extract_video_audio(video_url: str, dest: Path, ffmpeg_path: Path) -> bool:
         "-i", video_url,
         "-vn",
         "-acodec", "copy",
+        "-f", "ipod",
         "-y",
         str(tmp),
     ]
@@ -379,6 +393,36 @@ def _inline_image_path(output_dir: Path, talk: Talk, asset_id: str) -> Path:
     return output_dir / "inline" / f"{talk.talk_index:03d}-{safe_id}.jpg"
 
 
+def conference_downloads_complete(
+    conference: Conference,
+    output_dir: Path,
+    skip_audio: bool = False,
+    prefer_video_audio: bool = False,
+) -> bool:
+    """Return True when every file download_conference would queue already exists."""
+    expected: list[Path] = []
+
+    if not skip_audio:
+        for talk in conference.talks:
+            if prefer_video_audio and talk.video_url:
+                expected.append(_video_audio_path(output_dir, talk))
+            elif talk.mp3_url:
+                expected.append(_audio_path(output_dir, talk))
+
+    if conference.cover_image_url:
+        expected.append(output_dir / "cover.jpg")
+
+    for talk in conference.talks:
+        if talk.speaker_image_url:
+            expected.append(_speaker_path(output_dir, talk))
+        expected.extend(
+            _inline_image_path(output_dir, talk, img.asset_id)
+            for img in talk.inline_images
+        )
+
+    return bool(expected) and all(path.exists() for path in expected)
+
+
 def download_conference(
     conference: Conference,
     output_dir: Path,
@@ -413,34 +457,47 @@ def download_conference(
     session = _make_session()
     talks = conference.talks
 
-    # Build download queue: (url, dest, label, is_image, talk_or_none)
-    # talk_or_none is set for audio items so failed talks can be returned to the caller.
-    queue: list[tuple[str, Path, str, bool, Talk | None]] = []
+    # talk is set for audio items so failed talks can be returned to the caller.
+    queue: list[_DownloadItem] = []
 
     if not skip_audio:
         for talk in talks:
             if prefer_video_audio and talk.video_url:
                 dest = _video_audio_path(output_dir, talk)
-                queue.append((talk.video_url, dest, f"[video audio] {talk.title[:50]}", False, talk))
+                queue.append(_DownloadItem(
+                    url=talk.video_url,
+                    dest=dest,
+                    label=f"[video audio] {talk.title[:50]}",
+                    is_image=False,
+                    talk=talk,
+                    fallback_url=talk.mp3_url,
+                    fallback_dest=_audio_path(output_dir, talk) if talk.mp3_url else None,
+                ))
             elif talk.mp3_url:
                 dest = _audio_path(output_dir, talk)
-                queue.append((talk.mp3_url, dest, f"[audio] {talk.title[:50]}", False, talk))
+                queue.append(_DownloadItem(
+                    url=talk.mp3_url,
+                    dest=dest,
+                    label=f"[audio] {talk.title[:50]}",
+                    is_image=False,
+                    talk=talk,
+                ))
             else:
                 logger.warning("Talk %r has no mp3_url — skipping audio download", talk.title)
 
     if conference.cover_image_url:
         cover_dest = output_dir / "cover.jpg"
-        queue.append((conference.cover_image_url, cover_dest, "[cover] cover.jpg", True, None))
+        queue.append(_DownloadItem(conference.cover_image_url, cover_dest, "[cover] cover.jpg", True))
 
     for talk in talks:
         if talk.speaker_image_url:
             dest = _speaker_path(output_dir, talk)
-            queue.append((talk.speaker_image_url, dest, f"[photo] {talk.speaker[:40]}", True, None))
+            queue.append(_DownloadItem(talk.speaker_image_url, dest, f"[photo] {talk.speaker[:40]}", True))
 
     for talk in talks:
         for img in talk.inline_images:
             dest = _inline_image_path(output_dir, talk, img.asset_id)
-            queue.append((img.url, dest, f"[image] {img.asset_id[:40]}", True, None))
+            queue.append(_DownloadItem(img.url, dest, f"[image] {img.asset_id[:40]}", True))
 
     if not queue:
         logger.info("Nothing to download.")
@@ -449,23 +506,25 @@ def download_conference(
     # Pre-scan: count locally present files without making HEAD requests.
     # This is an approximation — audio files are further verified by Content-Length
     # inside download_file, but the pre-scan is cheap and accurate enough for UX.
-    pre_exists = sum(1 for _, dest, _, _, _ in queue if dest.exists())
+    pre_exists = sum(1 for item in queue if item.dest.exists())
     needs_download = len(queue) - pre_exists
 
     if needs_download == 0:
         logger.debug("All %d files already present — skipping download phase.", len(queue))
         return DownloadResult(skipped=len(queue))
 
+    image_queue = [item for item in queue if item.is_image]
+    audio_queue = [item for item in queue if not item.is_image]
+    needed_audio = sum(1 for item in audio_queue if not item.dest.exists())
+    needed_images = sum(1 for item in image_queue if not item.dest.exists())
+    breakdown = f"{needed_audio} audio, {needed_images} image(s)"
     if pre_exists > 0:
         _console.print(
             f"Downloading {needs_download} of {len(queue)} files "
-            f"({pre_exists} already present)..."
+            f"({breakdown}; {pre_exists} already present)..."
         )
     else:
-        _console.print(f"Downloading {len(queue)} files...")
-
-    image_queue = [(url, dest, label) for url, dest, label, is_image, _ in queue if is_image]
-    audio_queue = [(url, dest, label, talk) for url, dest, label, is_image, talk in queue if not is_image]
+        _console.print(f"Downloading {len(queue)} files ({breakdown})...")
 
     logger.debug(
         "Download queue: %d audio, %d image(s)",
@@ -488,15 +547,16 @@ def download_conference(
         # requests.Session is not thread-safe.
         if image_queue:
 
-            def _download_one_image(args: tuple[str, Path, str]) -> tuple[bool, str | None]:
+            def _download_one_image(item: _DownloadItem) -> tuple[bool, str | None]:
                 """Worker: download one image. Returns (was_downloaded, label_on_failure)."""
-                url, dest, label = args
                 try:
-                    was_downloaded = _download_image(url, dest, _get_thread_session(), retries=3)
+                    was_downloaded = _download_image(
+                        item.url, item.dest, _get_thread_session(), retries=3
+                    )
                     return was_downloaded, None
                 except (DownloadError, ValueError) as exc:
-                    logger.error("Failed to download %s: %s", label, exc)
-                    return False, label
+                    logger.error("Failed to download %s: %s", item.label, exc)
+                    return False, item.label
                 finally:
                     overall_progress.advance(overall_task)
 
@@ -516,24 +576,36 @@ def download_conference(
         # MP3s are large; parallel streaming of many large files simultaneously
         # would be impolite to the server and offers little wall-clock benefit
         # since the bottleneck is bandwidth, not latency.
-        for url, dest, label, queue_talk in audio_queue:
-            overall_progress.update(overall_task, description=label)
+        for item in audio_queue:
+            overall_progress.update(overall_task, description=item.label)
             try:
-                if dest.suffix == ".m4a":
+                if item.dest.suffix == ".m4a":
                     assert ffmpeg_path is not None
-                    was_downloaded = _extract_video_audio(url, dest, ffmpeg_path)
+                    try:
+                        was_downloaded = _extract_video_audio(item.url, item.dest, ffmpeg_path)
+                    except (DownloadError, ValueError) as exc:
+                        if item.fallback_url is None or item.fallback_dest is None:
+                            raise
+                        logger.warning(
+                            "Video audio extraction failed for %r; falling back to MP3: %s",
+                            item.talk.title if item.talk else item.label,
+                            exc,
+                        )
+                        was_downloaded = download_file(
+                            item.fallback_url, item.fallback_dest, session, retries=3
+                        )
                 else:
-                    was_downloaded = download_file(url, dest, session, retries=3)
+                    was_downloaded = download_file(item.url, item.dest, session, retries=3)
                 if was_downloaded:
                     downloaded += 1
                     time.sleep(delay)
                 else:
                     skipped += 1
             except (DownloadError, ValueError) as exc:
-                logger.error("Failed to download %s: %s", label, exc)
-                failed.append(label)
-                if queue_talk is not None:
-                    failed_talks.append(queue_talk)
+                logger.error("Failed to download %s: %s", item.label, exc)
+                failed.append(item.label)
+                if item.talk is not None:
+                    failed_talks.append(item.talk)
             finally:
                 overall_progress.advance(overall_task)
 
