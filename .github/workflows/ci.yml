@@ -114,7 +114,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
       # pip-audit currently flags pip itself (CVE-2026-3219) with no published fix version.
       - name: Run pip-audit
