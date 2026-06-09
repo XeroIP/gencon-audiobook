@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import calendar
 import logging
+import os
 import re
 import shutil
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import click
 from rich.logging import RichHandler
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from . import __version__
 from .audio import AudioError, BuildStats, build_m4b
 from .cache import CACHE_FILENAME, load_cache, save_cache
-from .downloader import DownloadError, DownloadResult, download_conference
+from .downloader import (
+    AudioProbe,
+    DownloadError,
+    DownloadResult,
+    _probe_audio_info,
+    conference_downloads_complete,
+    download_conference,
+)
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
-from .models import Talk
+from .models import Conference, Talk
 from .progress import shared_console
 from .scraper import ScraperError, fetch_available_conferences, scrape_conference
 
@@ -37,6 +46,33 @@ console = shared_console
 
 _CONF_BASE = "https://www.churchofjesuschrist.org/study/general-conference"
 _CONFERENCE_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
+
+
+class _OutputPathType(click.Path):
+    """Click path type that catches another option being used as --output's value."""
+
+    def convert(
+        self,
+        value: str | os.PathLike[str],
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> str:
+        if isinstance(value, str) and value.startswith("-"):
+            self.fail("requires a value and cannot use another option as its value", param, ctx)
+        return cast(str, super().convert(value, param, ctx))
+
+
+class _CliCommand(click.Command):
+    """Command subclass for clearer parse errors before Click consumes flags as values."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if "--output" in args:
+            index = args.index("--output")
+            if index == len(args) - 1 or args[index + 1].startswith("-"):
+                raise click.UsageError(
+                    "Option '--output' requires a value and cannot use another option as its value."
+                )
+        return super().parse_args(ctx, args)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +196,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 
     # No filter — fetch listing, default to most recent.
     try:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as sp:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as sp:
             sp.add_task("Fetching available conferences...")
             refs = fetch_available_conferences()
     except ScraperError as exc:
@@ -184,11 +225,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-@click.command()
+@click.command(cls=_CliCommand)
 @click.option(
     "--output",
     default="~/gencon-audiobook",
     show_default=True,
+    type=_OutputPathType(path_type=str),
     help="Directory to save output files.",
 )
 @click.option(
@@ -243,6 +285,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     default=False,
     help="Add left-margin paragraph numbers to each talk transcript in the EPUB.",
 )
+@click.option(
+    "--prefer-video-audio",
+    is_flag=True,
+    default=False,
+    help="Use higher-quality audio extracted from 360p video when it beats the MP3 source.",
+)
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
     output: str,
@@ -255,10 +303,18 @@ def main(
     bitrate: str | None,
     sample_rate: int | None,
     epub_paragraph_numbers: bool,
+    prefer_video_audio: bool,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _check_python_version()
     _setup_logging(verbose)
+    if audiobook_only and epub_only:
+        click.echo(
+            "Error: --audiobook-only and --epub-only are mutually exclusive. "
+            "Choose one output type or omit both to build both.",
+            err=True,
+        )
+        sys.exit(1)
 
     try:
         _run(
@@ -271,6 +327,7 @@ def main(
             bitrate=bitrate,
             sample_rate=sample_rate,
             epub_paragraph_numbers=epub_paragraph_numbers,
+            prefer_video_audio=prefer_video_audio,
         )
     except KeyboardInterrupt:
         console.print(
@@ -297,7 +354,7 @@ def _format_duration(seconds: float) -> str:
 
 
 def _print_completion_report(
-    conf_title: str,
+    conference: Conference,
     conf_output_dir: Path,
     m4b_path: Path,
     epub_path: Path,
@@ -308,7 +365,7 @@ def _print_completion_report(
     """Print a structured completion report to the console.
 
     Args:
-        conf_title: Human-readable conference title.
+        conference: Conference metadata used for output names and session details.
         conf_output_dir: Conference output directory.
         m4b_path: Path to the built m4b file (may not exist if epub-only).
         epub_path: Path to the built epub file (may not exist if audiobook-only).
@@ -318,7 +375,10 @@ def _print_completion_report(
     """
     console.print("")
     console.print("--- Completion Report ---")
-    console.print(f"  Conference:    {conf_title}")
+    console.print(f"  Conference:    {conference.title}")
+    console.print(f"  Sessions:      {len(conference.sessions)}")
+    for session in conference.sessions:
+        console.print(f"    - {session.name}")
 
     if stats is not None:
         console.print(f"  Duration:      {_format_duration(stats.duration_seconds)}")
@@ -337,8 +397,13 @@ def _print_completion_report(
         size_mb = epub_path.stat().st_size / 1_048_576
         console.print(f"  EPUB:          {epub_path.name} ({size_mb:.1f} MB)")
 
-    if phase_times:
-        parts = ", ".join(f"{label} {elapsed:.0f}s" for label, elapsed in phase_times.items())
+    visible_phase_times = {
+        label: elapsed for label, elapsed in phase_times.items() if elapsed > 0.5
+    }
+    if visible_phase_times:
+        parts = ", ".join(
+            f"{label} {elapsed:.0f}s" for label, elapsed in visible_phase_times.items()
+        )
         console.print(f"  Timing:        {parts}")
 
     if len(failed_talks) > 0:
@@ -353,6 +418,113 @@ def _print_completion_report(
     console.print(f"  Log:    {conf_output_dir / _LOG_FILENAME}")
 
 
+def _format_bytes(size_bytes: float) -> str:
+    """Format a byte count as MB or GB for terminal display."""
+    if size_bytes >= 1024 ** 3:
+        return f"~{size_bytes / (1024 ** 3):.1f} GB"
+    return f"~{size_bytes / (1024 ** 2):.0f} MB"
+
+
+def _find_probe_talk(talks: list[Talk]) -> Talk | None:
+    """Return the first talk with both MP3 and video URLs."""
+    return next((talk for talk in talks if talk.mp3_url and talk.video_url), None)
+
+
+def _probe_conference_quality(conf_obj: Conference, ffprobe: Path) -> tuple[AudioProbe, AudioProbe] | None:
+    """Probe representative MP3 and video audio quality for a conference."""
+    probe_talk = _find_probe_talk(conf_obj.talks)
+    if probe_talk is None or probe_talk.mp3_url is None or probe_talk.video_url is None:
+        return None
+    try:
+        return (
+            _probe_audio_info(probe_talk.mp3_url, ffprobe),
+            _probe_audio_info(probe_talk.video_url, ffprobe),
+        )
+    except (OSError, ValueError, DownloadError) as exc:
+        logger.warning("Could not probe audio quality: %s", exc)
+        return None
+
+
+def _kbps(bit_rate: int | None) -> int:
+    return round((bit_rate or 0) / 1000)
+
+
+def _video_estimates(conf_obj: Conference, mp3_probe: AudioProbe, video_probe: AudioProbe) -> tuple[str, str, str, int, int]:
+    """Return display estimates for --prefer-video-audio confirmation."""
+    video_count = sum(1 for talk in conf_obj.talks if talk.video_url)
+    total_count = len(conf_obj.talks)
+    fallback_count = total_count - video_count
+    avg_duration = video_probe.duration_seconds or mp3_probe.duration_seconds or 0
+    video_download_bytes = ((video_probe.total_bitrate_bps or video_probe.audio_bitrate_bps or 0) * avg_duration * video_count) / 8
+    audio_cache_bytes = ((video_probe.audio_bitrate_bps or 0) * avg_duration * video_count) / 8
+    mp3_bytes = ((mp3_probe.audio_bitrate_bps or 0) * avg_duration * total_count) / 8
+    return (
+        _format_bytes(video_download_bytes),
+        _format_bytes(audio_cache_bytes),
+        _format_bytes(mp3_bytes),
+        video_count,
+        fallback_count,
+    )
+
+
+def _confirm_audio_choice(
+    conf_obj: Conference,
+    mp3_probe: AudioProbe,
+    video_probe: AudioProbe,
+    prefer_video_audio: bool,
+    skip_confirmation: bool = False,
+) -> bool:
+    """Return True when download_conference should extract video audio."""
+    mp3_bitrate = mp3_probe.audio_bitrate_bps
+    video_bitrate = video_probe.audio_bitrate_bps
+    if not mp3_bitrate or not video_bitrate:
+        return False
+
+    if video_bitrate <= mp3_bitrate:
+        if prefer_video_audio:
+            console.print(
+                "\n[yellow]--prefer-video-audio was requested, but the MP3 source is already "
+                "equal or better for this conference.[/yellow]"
+            )
+            console.print(f"\n  Source MP3:  {_kbps(mp3_bitrate)} kbps")
+            console.print(f"  Video audio: {_kbps(video_bitrate)} kbps AAC")
+            if not click.confirm("\nContinue with standard MP3 audio?", default=True):
+                sys.exit(0)
+        return False
+
+    if not prefer_video_audio:
+        console.print("\n[yellow]Higher quality audio is available for this conference.[/yellow]\n")
+        console.print(f"  Source MP3:  {_kbps(mp3_bitrate)} kbps")
+        console.print(f"  Video audio: {_kbps(video_bitrate)} kbps AAC")
+        console.print(
+            "\nRe-run with --prefer-video-audio to download higher quality audio.\n"
+            "Note: video audio extraction takes significantly longer and requires\n"
+            "much more disk space than standard MP3 download."
+        )
+        if not click.confirm("\nContinue with lower quality?", default=False):
+            sys.exit(0)
+        return False
+
+    console.print("\n[cyan]--prefer-video-audio is active.[/cyan]\n")
+    if skip_confirmation:
+        console.print("All downloads and the audiobook already exist; skipping download confirmation.")
+        return True
+
+    download_size, audio_cache_size, mp3_size, video_count, fallback_count = _video_estimates(
+        conf_obj, mp3_probe, video_probe
+    )
+    console.print(
+        f"  Talks to process:      {len(conf_obj.talks)}  "
+        f"({video_count} via video, {fallback_count} fallback to MP3)"
+    )
+    console.print(f"  Estimated download:    {download_size}  (vs {mp3_size} for MP3 only)")
+    console.print(f"  Estimated audio cache: {audio_cache_size}")
+    console.print("\nDownload time will be significantly longer than a standard run.")
+    if not click.confirm("\nProceed?", default=False):
+        sys.exit(0)
+    return True
+
+
 def _run(
     output: str,
     conference: str | None,
@@ -363,6 +535,7 @@ def _run(
     bitrate: str | None,
     sample_rate: int | None,
     epub_paragraph_numbers: bool = False,
+    prefer_video_audio: bool = False,
 ) -> None:
     """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()
@@ -373,6 +546,8 @@ def _run(
     # Resolve the output directory early — conf_title matches conf_obj.title, so we
     # can check the cache before scraping rather than after.
     conf_output_dir = output_dir / conf_title
+    m4b_path = conf_output_dir / f"{conf_title}.m4b"
+    epub_path = conf_output_dir / f"{conf_title}.epub"
 
     # Load from cache if available and --force-scrape not set.
     conf_obj = None
@@ -391,6 +566,14 @@ def _run(
         try:
             conf_obj = scrape_conference(conf_url)
         except ScraperError as exc:
+            if conference and "not found" in str(exc).lower():
+                click.echo(
+                    f"Error: Conference {conference} was not found at churchofjesuschrist.org.\n"
+                    "Check the conference code or run without --conference to choose from "
+                    "available conferences.",
+                    err=True,
+                )
+                sys.exit(1)
             click.echo(f"Error: {exc}", err=True)
             sys.exit(1)
         phase_times["scrape"] = time.monotonic() - t0
@@ -409,6 +592,39 @@ def _run(
         )
         sys.exit(1)
 
+    ffmpeg: Path | None = None
+    ffprobe: Path | None = None
+    use_video_audio = False
+    if not epub_only:
+        try:
+            ffmpeg = ensure_ffmpeg()
+            ffprobe = ensure_ffprobe()
+        except FfmpegNotFoundError as exc:
+            click.echo(f"Error: ffmpeg not available.\n{exc}", err=True)
+            sys.exit(1)
+        quality = _probe_conference_quality(conf_obj, ffprobe)
+        if quality is not None:
+            mp3_probe, video_probe = quality
+            skip_video_confirmation = (
+                prefer_video_audio
+                and audiobook_only
+                and not overwrite
+                and m4b_path.exists()
+                and conference_downloads_complete(
+                    conf_obj,
+                    conf_output_dir,
+                    skip_audio=False,
+                    prefer_video_audio=True,
+                )
+            )
+            use_video_audio = _confirm_audio_choice(
+                conf_obj,
+                mp3_probe,
+                video_probe,
+                prefer_video_audio,
+                skip_confirmation=skip_video_confirmation,
+            )
+
     # Warn if disk space is low before starting downloads.
     _check_disk_space(conf_output_dir)
 
@@ -418,13 +634,19 @@ def _run(
     t0 = time.monotonic()
     try:
         dl_result: DownloadResult = download_conference(
-            conf_obj, conf_output_dir, skip_audio=epub_only
+            conf_obj,
+            conf_output_dir,
+            skip_audio=epub_only,
+            prefer_video_audio=use_video_audio,
+            ffmpeg_path=ffmpeg,
         )
     except DownloadError as exc:
         click.echo(f"Error: Download failed: {exc}", err=True)
         sys.exit(1)
-    phase_times["download"] = time.monotonic() - t0
-    failed_talks = dl_result.failed_talks
+    downloaded_count = dl_result.downloaded if isinstance(dl_result.downloaded, int) else 0
+    failed_talks = dl_result.failed_talks if isinstance(dl_result.failed_talks, list) else []
+    if downloaded_count > 0 or failed_talks:
+        phase_times["download"] = time.monotonic() - t0
 
     m4b_path = conf_output_dir / f"{conf_obj.title}.m4b"
     epub_path = conf_output_dir / f"{conf_obj.title}.epub"
@@ -432,13 +654,18 @@ def _run(
 
     # Build m4b audiobook
     if not epub_only:
-        console.print("Building audiobook...")
-        try:
-            ffmpeg = ensure_ffmpeg()
-            ffprobe = ensure_ffprobe()
-        except FfmpegNotFoundError as exc:
-            click.echo(f"Error: ffmpeg not available.\n{exc}", err=True)
+        if failed_talks and len(failed_talks) == len(conf_obj.talks):
+            click.echo(
+                "Error: No talk audio files were downloaded, so the audiobook cannot be built.\n"
+                f"All {len(failed_talks)} talk(s) failed. Check the log for details:\n"
+                f"{conf_output_dir / _LOG_FILENAME}\n"
+                "Run again to retry; already-downloaded files will be reused.",
+                err=True,
+            )
             sys.exit(1)
+        console.print("Building audiobook...")
+        assert ffmpeg is not None
+        assert ffprobe is not None
 
         audio_dir = conf_output_dir / "audio"
         cover_path = conf_output_dir / "cover.jpg"
@@ -477,6 +704,7 @@ def _run(
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
+                    TimeElapsedColumn(),
                     console=console,
                 ) as sp:
                     sp.add_task(f"Building EPUB: {conf_obj.title}")
@@ -492,7 +720,7 @@ def _run(
             phase_times["epub"] = time.monotonic() - t0
 
     _print_completion_report(
-        conf_title=conf_obj.title,
+        conference=conf_obj,
         conf_output_dir=conf_output_dir,
         m4b_path=m4b_path,
         epub_path=epub_path,

@@ -13,10 +13,10 @@ from pathlib import Path
 
 from mutagen import MutagenError
 from mutagen.mp4 import MP4
-from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
+from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
 
 from .models import Conference, Talk
-from .progress import standard_progress
+from .progress import shared_console, standard_progress
 from .utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -626,18 +626,22 @@ def build_m4b(
     source_sample_rate: int | None = None
 
     # Step 1: Auto-detect source quality unless the caller explicitly overrode it.
-    # Probe the first available MP3 — all talks in a conference come from the same
+    # Probe the first available audio file — all talks in a conference come from the same
     # source pipeline and share the same bitrate/sample_rate.
-    first_mp3 = next(
+    first_audio = next(
         (
-            audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.mp3"
+            path
             for t in talks
-            if (audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.mp3").exists()
+            for path in (
+                audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.m4a",
+                audio_dir / f"{t.talk_index:03d}-{sanitize_filename(t.title)}.mp3",
+            )
+            if path.exists()
         ),
         None,
     )
-    if first_mp3 is not None:
-        detected_bitrate, detected_sample_rate = _probe_source_quality(first_mp3, ffprobe_path)
+    if first_audio is not None:
+        detected_bitrate, detected_sample_rate = _probe_source_quality(first_audio, ffprobe_path)
         source_bitrate = detected_bitrate
         source_sample_rate = detected_sample_rate
         if bitrate is None:
@@ -652,8 +656,9 @@ def build_m4b(
     source_bitrate = source_bitrate or bitrate
     source_sample_rate = source_sample_rate or sample_rate
 
-    # Step 2: Convert MP3 → AAC, populate duration_seconds
+    # Step 2: Convert MP3 -> AAC or reuse extracted AAC, populate duration_seconds
     logger.info("Converting %d talks to AAC...", len(talks))
+    delete_after_build: list[Path] = []
     conv_progress = standard_progress()
     with conv_progress:
         outer_task = conv_progress.add_task("Converting to AAC", total=len(talks))
@@ -661,8 +666,23 @@ def build_m4b(
         for talk in talks:
             conv_progress.update(outer_task, description=talk.title[:60])
             mp3_path = audio_dir / f"{talk.talk_index:03d}-{sanitize_filename(talk.title)}.mp3"
+            m4a_path = mp3_path.with_suffix(".m4a")
+            if m4a_path.exists():
+                try:
+                    duration = _get_duration_ffprobe(m4a_path, ffprobe_path)
+                    talk.duration_seconds = duration
+                    aac_paths.append(m4a_path)
+                    successful_talks.append(talk)
+                    logger.debug("Using existing AAC %s (%.1fs)", m4a_path.name, duration)
+                except AudioError as exc:
+                    logger.error("AAC probe failed for %r: %s — skipping", talk.title, exc)
+                    skipped.append(talk.title)
+                finally:
+                    conv_progress.advance(outer_task)
+                continue
+
             if not mp3_path.exists():
-                logger.warning("MP3 not found for talk %r (%s) — skipping", talk.title, mp3_path)
+                logger.warning("Audio not found for talk %r (%s) — skipping", talk.title, mp3_path)
                 skipped.append(talk.title)
                 conv_progress.advance(outer_task)
                 continue
@@ -691,6 +711,7 @@ def build_m4b(
                 )
                 talk.duration_seconds = duration
                 aac_paths.append(aac_path)
+                delete_after_build.append(aac_path)
                 successful_talks.append(talk)
                 logger.debug("Converted %s (%.1fs)", mp3_path.name, duration)
             except AudioError as exc:
@@ -724,6 +745,8 @@ def build_m4b(
         _spinner_progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=shared_console,
         )
         with _spinner_progress:
             _spinner_progress.add_task(f"Concatenating {len(aac_paths)} AAC files...")
@@ -767,13 +790,16 @@ def build_m4b(
         _spinner_progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=shared_console,
         )
         with _spinner_progress:
             _spinner_progress.add_task(f"Muxing m4b: {output_path.name}")
             _run(mux_cmd, label="m4b mux")
 
-    # Step 6: Delete individual AAC files (intermediate cleaned by TemporaryDirectory)
-    for aac_path in aac_paths:
+    # Step 6: Delete only AAC files created from MP3 conversion. Extracted video
+    # audio is a reusable source cache and must remain for resume/rebuild.
+    for aac_path in delete_after_build:
         try:
             aac_path.unlink()
             logger.debug("Deleted intermediate AAC: %s", aac_path.name)
@@ -781,7 +807,12 @@ def build_m4b(
             logger.warning("Could not delete %s: %s", aac_path, exc)
 
     # Step 7: Verify
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as sp:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=shared_console,
+    ) as sp:
         sp.add_task(f"Verifying m4b: {output_path.name}")
         _verify_m4b(output_path, conference, ffprobe_path)
     logger.info("Built: %s (%.1f MB)", output_path.name, output_path.stat().st_size / 1_048_576)
