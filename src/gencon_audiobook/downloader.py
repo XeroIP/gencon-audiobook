@@ -12,6 +12,7 @@ from typing import cast
 
 import requests
 from PIL import Image
+
 from .models import Conference, Talk
 from .progress import standard_progress
 from .utils import USER_AGENT, sanitize_filename, validate_url
