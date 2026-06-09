@@ -264,6 +264,11 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
                     "github.com/XeroIP/gencon-audiobook"
                 )
 
+            if response.status_code == 404:
+                # 404 is deterministic for conference/talk pages — retrying only
+                # hides the real problem behind a misleading connectivity error.
+                raise ScraperError(f"Page not found: {url}")
+
             if response.status_code == 429:
                 # 429 is a transient rate-limit signal — respect Retry-After if present,
                 # otherwise fall through to raise_for_status() which triggers the retry loop.

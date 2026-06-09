@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Progress indicators now show elapsed time on long-running progress bars and spinner phases.
+- Download status messages now show audio/image count breakdowns.
+
+### Fixed
+- `--prefer-video-audio` extraction now writes `.m4a.tmp` files with an explicit ffmpeg muxer, fixing Windows extraction failures where ffmpeg could not infer the output format.
+- `--prefer-video-audio` now falls back to the MP3 URL for an individual talk if video-audio extraction fails.
+- Fully cached `--prefer-video-audio` reruns skip the heavy download confirmation and avoid misleading no-op timing output.
+- `--audiobook-only` and `--epub-only` are now rejected as mutually exclusive flags before scraping or downloading.
+- Missing `--output` values now produce a direct option-value error instead of an unrelated extra-argument error.
+- Missing direct conference URLs now report the requested conference as unavailable instead of retrying and blaming internet connectivity.
+- If every talk audio download fails, the CLI now stops before audiobook build with a clear error and log path.
+
+### Changed
+- Video-audio decision banners are styled so important warning/active states stand out without coloring the full prompt body.
+
 ## [0.2.0rc1] - 2026-04-29
 
 ### Added

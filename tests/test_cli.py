@@ -63,6 +63,16 @@ def test_help_exits_zero() -> None:
     assert "--conference" in result.output
 
 
+def test_output_missing_value_reports_output_error() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["--output", "--conference", "2024-04", "--audiobook-only"])
+
+    assert result.exit_code != 0
+    assert "--output" in result.output
+    assert "requires a value" in result.output
+    assert "unexpected extra argument" not in result.output.lower()
+
+
 def test_version_flag() -> None:
     from gencon_audiobook import __version__
     runner = CliRunner()
@@ -116,6 +126,17 @@ def test_audiobook_only_skips_epub(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     mock_m4b.assert_called_once()
     mock_epub.assert_not_called()
+
+
+def test_audiobook_only_and_epub_only_are_mutually_exclusive(tmp_path: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["--output", str(tmp_path), "--audiobook-only", "--epub-only"],
+    )
+
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
 
 
 def test_default_builds_both(tmp_path: Path) -> None:
@@ -287,6 +308,22 @@ def test_scrape_conference_error_exits_nonzero(tmp_path: Path) -> None:
         result = runner.invoke(main, ["--output", str(tmp_path)])
 
     assert result.exit_code != 0
+
+
+def test_direct_conference_404_gets_conference_not_found_message(tmp_path: Path) -> None:
+    with patch(
+        "gencon_audiobook.cli.scrape_conference",
+        side_effect=ScraperError("Page not found: https://example.test/2099/04"),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["--output", str(tmp_path), "--conference", "2099-04", "--epub-only"],
+        )
+
+    assert result.exit_code != 0
+    assert "Conference 2099-04 was not found" in result.output
+    assert "internet connection" not in result.output
 
 
 def test_audio_error_exits_nonzero(tmp_path: Path) -> None:
@@ -468,6 +505,30 @@ def test_download_error_exits_nonzero(tmp_path: Path) -> None:
     assert result.exit_code != 0
     assert "Download error" in result.output or "timed out" in result.output, \
         f"Expected download error message in output, got: {result.output!r}"
+
+
+def test_all_talk_download_failures_exit_before_audiobook_build(tmp_path: Path) -> None:
+    refs = [_make_ref()]
+    conference = _make_conference()
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch(
+            "gencon_audiobook.cli.download_conference",
+            return_value=DownloadResult(failed_talks=conference.talks),
+        ),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli.build_m4b") as mock_build,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output", str(tmp_path), "--audiobook-only"])
+
+    assert result.exit_code != 0
+    assert "No talk audio files were downloaded" in result.output
+    assert "All 1 talk(s) failed" in result.output
+    mock_build.assert_not_called()
 
 
 def test_overwrite_skips_epub_when_epub_exists(tmp_path: Path) -> None:
@@ -665,6 +726,46 @@ def test_prefer_video_audio_prompts_with_estimates_and_enables_extraction(tmp_pa
     assert "--prefer-video-audio is active" in result.output
     assert "Estimated download" in result.output
     assert mock_download.call_args.kwargs["prefer_video_audio"] is True
+
+
+def test_prefer_video_audio_cached_noop_skips_heavy_confirmation(tmp_path: Path) -> None:
+    conference = _make_conference(
+        video_url="https://assets.churchofjesuschrist.org/video-360p-en.mp4"
+    )
+    output_dir = tmp_path / "April 2024 General Conference"
+    output_dir.mkdir()
+    (output_dir / "April 2024 General Conference.m4b").write_bytes(b"m4b")
+    (output_dir / "audio").mkdir()
+    (output_dir / "audio" / "001-Opening-Remarks.m4a").write_bytes(b"aac")
+
+    with (
+        patch("gencon_audiobook.cli.scrape_conference", return_value=conference),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
+        patch("gencon_audiobook.cli._probe_audio_info", side_effect=[
+            AudioProbe(audio_bitrate_bps=32_000, duration_seconds=600.0, total_bitrate_bps=32_000),
+            AudioProbe(audio_bitrate_bps=96_000, duration_seconds=600.0, total_bitrate_bps=600_000),
+        ]),
+        patch("gencon_audiobook.cli.download_conference", return_value=DownloadResult()) as mock_download,
+        patch("gencon_audiobook.cli.click.confirm") as mock_confirm,
+        patch("gencon_audiobook.cli.build_m4b") as mock_build,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "--output", str(tmp_path),
+                "--audiobook-only",
+                "--conference", "2024-04",
+                "--prefer-video-audio",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "skipping download confirmation" in result.output
+    mock_confirm.assert_not_called()
+    assert mock_download.call_args.kwargs["prefer_video_audio"] is True
+    mock_build.assert_not_called()
 
 
 def test_prefer_video_audio_does_not_downgrade_better_mp3(tmp_path: Path) -> None:
