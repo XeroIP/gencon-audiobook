@@ -32,6 +32,7 @@ def _make_conference() -> Conference:
         speaker="President Henry B. Eyring",
         talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/talk1",
         mp3_url="https://assets.churchofjesuschrist.org/audio/talk1.mp3",
+        video_url="https://assets.churchofjesuschrist.org/video/talk1-360p-en.mp4",
         transcript_html="<p>Welcome.</p>",
         speaker_image_url="https://assets.churchofjesuschrist.org/photo1.jpg",
         inline_images=[inline],
@@ -46,6 +47,7 @@ def _make_conference() -> Conference:
         speaker="Elder Test Speaker",
         talk_url="https://www.churchofjesuschrist.org/study/general-conference/2024/04/talk2",
         mp3_url=None,
+        video_url=None,
         transcript_html=None,
         speaker_image_url=None,
         inline_images=[],
@@ -95,6 +97,7 @@ def test_save_load_round_trip(tmp_path: "pytest.TempPathFactory") -> None:
     assert loaded_talk.speaker == orig_talk.speaker
     assert loaded_talk.talk_url == orig_talk.talk_url
     assert loaded_talk.mp3_url == orig_talk.mp3_url
+    assert loaded_talk.video_url == orig_talk.video_url
     assert loaded_talk.transcript_html == orig_talk.transcript_html
     assert loaded_talk.speaker_image_url == orig_talk.speaker_image_url
     assert loaded_talk.session_name == orig_talk.session_name
@@ -136,6 +139,24 @@ def test_load_cache_corrupt_json(tmp_path: "pytest.TempPathFactory") -> None:
     (tmp_path / CACHE_FILENAME).write_text("this is not valid json{{{", encoding="utf-8")
     result = load_cache(tmp_path, expected_url="https://example.com/conf")
     assert result is None, "Expected None for corrupt JSON"
+
+
+def test_load_cache_malformed_conference_data(tmp_path: "pytest.TempPathFactory") -> None:
+    """Valid JSON with an invalid conference shape must fall back to re-scraping."""
+    expected_url = "https://www.churchofjesuschrist.org/study/general-conference/2024/04"
+    malformed = {
+        "cache_version": CACHE_VERSION,
+        "conference": {
+            "conference_url": expected_url,
+            "title": "April 2024 General Conference",
+            # Missing sessions/year/month/cover_image_url.
+        },
+    }
+    (tmp_path / CACHE_FILENAME).write_text(json.dumps(malformed), encoding="utf-8")
+
+    result = load_cache(tmp_path, expected_url=expected_url)
+
+    assert result is None, "Expected None for malformed conference cache data"
 
 
 def test_load_cache_version_mismatch(tmp_path: "pytest.TempPathFactory") -> None:

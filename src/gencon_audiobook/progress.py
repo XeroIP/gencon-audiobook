@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -10,9 +11,15 @@ from rich.progress import (
     Task,
     TaskProgressColumn,
     TextColumn,
+    TimeElapsedColumn,
     TimeRemainingColumn,
 )
 from rich.text import Text
+
+# Single shared console used by all progress bars AND the RichHandler in cli.py.
+# When Progress and RichHandler share the same Console, Rich correctly interleaves
+# log messages above the live progress bar instead of clobbering the same line.
+shared_console = Console()
 
 
 class TimeRemainingWithLabel(TimeRemainingColumn):
@@ -47,13 +54,15 @@ def standard_progress() -> Progress:
     All full-width progress bars (scrape, download, convert) use this factory
     so their columns are identical and visually aligned.
 
-    Column order: spinner | N/M count | bar | percent | time remaining | description
+    Column order: spinner | N/M count | bar | percent | elapsed | remaining | description
     """
     return Progress(
         SpinnerColumn(),
         ConditionalMofNColumn(),
         BarColumn(),
         TaskProgressColumn(),
+        TimeElapsedColumn(),
         TimeRemainingWithLabel(compact=True),
         TextColumn("[progress.description]{task.description}"),
+        console=shared_console,
     )

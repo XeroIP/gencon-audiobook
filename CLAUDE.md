@@ -48,7 +48,8 @@ No emojis anywhere — not in terminal output, log messages, generated files, or
 
 ## GitHub Issues
 All changes require a GitHub issue before work begins. Cosmetic fixes (typos, whitespace) are
-the only exception. Use `gh issue create` following the project's issue format.
+the only exception. Use `gh issue create` following the format in `.claude/rules/github-issues.md`.
+That file defines the exact title prefix, label, and body template for every issue type.
 
 Every PR description body must include `Closes #N` for each issue it resolves. GitHub reads
 the PR body (not the commit message) to auto-close issues on squash merge — omitting it leaves

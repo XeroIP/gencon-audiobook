@@ -133,6 +133,7 @@ def _talk_from_dict(d: dict[str, Any]) -> Talk:
         speaker=d["speaker"],
         talk_url=d["talk_url"],
         mp3_url=d.get("mp3_url"),
+        video_url=d.get("video_url"),
         transcript_html=d.get("transcript_html"),
         speaker_image_url=d.get("speaker_image_url"),
         inline_images=inline_images,

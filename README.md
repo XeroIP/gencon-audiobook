@@ -37,7 +37,7 @@ New to the terminal or Python? See the [User Guide](https://github.com/XeroIP/ge
 gencon-audiobook
 
 # Select a specific conference
-gencon-audiobook --conference "April 2024"
+gencon-audiobook --conference 2024-04
 
 # Audiobook only (skip epub)
 gencon-audiobook --audiobook-only
@@ -56,6 +56,9 @@ gencon-audiobook --force-scrape
 
 # Reduce file size (lower bitrate and sample rate)
 gencon-audiobook --bitrate 32k --sample-rate 22050
+
+# Use higher-quality video audio when older MP3 audio is worse
+gencon-audiobook --conference 2024-04 --prefer-video-audio
 
 # Show detailed progress in the terminal
 gencon-audiobook --verbose
@@ -85,6 +88,8 @@ For the full options reference, file size guide, and platform compatibility note
 
 Running the tool a second time skips files that already exist and loads conference metadata from `conference.json` instead of re-scraping the Church website. Use `--overwrite` to rebuild output files. Use `--force-scrape` to bypass the metadata cache and fetch fresh data from the Church website.
 
+For older conferences, the tool checks whether the 360p video has better audio than the MP3 source. If it does, the default run warns you before downloading. Re-run with `--prefer-video-audio` to extract the higher-quality AAC track from video files. This takes significantly longer and requires much more disk space, so the tool shows estimated download and audio-cache sizes before starting.
+
 ---
 
 ## Documentation
@@ -105,6 +110,9 @@ pip install -e ".[dev]"
 
 # Run unit tests (no network required)
 pytest tests/ --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py
+
+# Build source and wheel distributions
+python -m build
 
 # Run live smoke tests (hits the real website)
 pytest tests/test_scraper_live.py -v -m live

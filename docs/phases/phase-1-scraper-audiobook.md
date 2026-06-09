@@ -599,7 +599,7 @@ Implement a minimal but functional CLI. Full error handling and polish comes in 
 @click.option("--output", default="~/gencon-audiobook", show_default=True,
               help="Directory to save output files.")
 @click.option("--conference", default=None,
-              help="Conference to download (e.g., 'April 2024'). Defaults to most recent.")
+              help="Conference date as YYYY-MM (e.g., '2024-04'). Defaults to most recent.")
 @click.option("--audiobook-only", is_flag=True, default=False,
               help="Produce only the m4b audiobook, skip epub.")
 @click.option("--epub-only", is_flag=True, default=False,
@@ -682,7 +682,7 @@ gencon-audiobook --audiobook-only --output ./test_output
 
 # 7. Resume behavior
 # Delete one MP3 from test_output, re-run:
-gencon-audiobook --audiobook-only --output ./test_output --conference "April 2024"
+gencon-audiobook --audiobook-only --output ./test_output --conference 2024-04
 # Expected: only the deleted file re-downloads; all others skipped
 
 # 8. ffmpeg fallback (on clean venv without system ffmpeg)

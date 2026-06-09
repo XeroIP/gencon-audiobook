@@ -250,6 +250,51 @@ def test_build_m4b_skips_missing_mp3(tmp_path: Path) -> None:
     )
 
 
+@requires_ffmpeg
+def test_build_m4b_skips_talk_when_conversion_fails(tmp_path: Path) -> None:
+    """A mid-build conversion failure must not create a ghost chapter."""
+    from unittest.mock import patch
+
+    import gencon_audiobook.audio as audio_module
+
+    conference = _make_conference(tmp_path, n_talks=2)
+    audio_dir = tmp_path / "audio"
+    output = tmp_path / "output.m4b"
+    original_convert = audio_module.convert_mp3_to_aac
+
+    def convert_or_fail(*args, **kwargs):
+        mp3_path = args[0]
+        if mp3_path.name.startswith("002-"):
+            raise AudioError("simulated conversion failure")
+        return original_convert(*args, **kwargs)
+
+    with patch("gencon_audiobook.audio.convert_mp3_to_aac", side_effect=convert_or_fail):
+        stats = build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    assert output.exists(), "m4b should still be produced when one conversion fails"
+    assert stats.chapter_count == 1, "Failed talk must not appear as a ghost chapter"
+    assert conference.talks[0].duration_seconds > 0
+    assert conference.talks[1].duration_seconds == 0.0
+
+
+@requires_ffmpeg
+def test_build_m4b_uses_existing_m4a_without_deleting_it(tmp_path: Path) -> None:
+    conference = _make_conference(tmp_path, n_talks=1)
+    audio_dir = tmp_path / "audio"
+    mp3_path = audio_dir / "001-Talk-1.mp3"
+    m4a_path = mp3_path.with_suffix(".m4a")
+    output = tmp_path / "output.m4b"
+
+    convert_mp3_to_aac(mp3_path, m4a_path, _FFMPEG, _FFPROBE)
+    mp3_path.unlink()
+
+    stats = build_m4b(conference, audio_dir, output, None, _FFMPEG, _FFPROBE)
+
+    assert output.exists(), "m4b should be produced from existing .m4a source"
+    assert m4a_path.exists(), "Extracted video audio cache must not be deleted"
+    assert stats.chapter_count == 1
+
+
 # ---------------------------------------------------------------------------
 # _ffmeta_escape — pure function tests
 # ---------------------------------------------------------------------------
@@ -534,8 +579,7 @@ def test_run_ffmpeg_with_progress_parses_out_time() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter(stdout_lines)
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = ""
+    mock_proc.stderr = iter([])  # iterable — drained by stderr thread
     mock_proc.returncode = 0
     mock_proc.poll.return_value = 0
 
@@ -564,8 +608,7 @@ def test_run_ffmpeg_with_progress_nonzero_exit() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter(["progress=end\n"])
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = "some ffmpeg error"
+    mock_proc.stderr = iter(["some ffmpeg error\n"])  # iterable — drained by stderr thread
     mock_proc.returncode = 1
     mock_proc.poll.return_value = 1
 
@@ -587,8 +630,7 @@ def test_run_ffmpeg_with_progress_watchdog_kills_hung_process() -> None:
 
     mock_proc = MagicMock()
     mock_proc.stdout = iter([])  # EOF immediately so the readline loop exits
-    mock_proc.stderr = MagicMock()
-    mock_proc.stderr.read.return_value = ""
+    mock_proc.stderr = iter([])  # iterable — drained by stderr thread
     mock_proc.returncode = -9
     mock_proc.poll.return_value = None  # process appears still running when watchdog fires
 
@@ -613,3 +655,32 @@ def test_run_ffmpeg_with_progress_watchdog_kills_hung_process() -> None:
                 progress=progress,
                 task_id=0,  # type: ignore[arg-type]
             )
+
+
+def test_run_ffmpeg_with_progress_noisy_stderr_does_not_deadlock() -> None:
+    """ffmpeg writing large amounts of stderr should not deadlock.
+
+    Previously, stderr was piped but never read, causing the OS pipe buffer
+    (4KB on Windows) to fill and deadlock both processes.
+    """
+    from unittest.mock import MagicMock, patch
+
+    # Simulate lots of stderr output (well beyond OS pipe buffer)
+    noisy_stderr = ["WARNING: something suspicious\n"] * 500
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(["out_time_us=1000000\n", "progress=end\n"])
+    mock_proc.stderr = iter(noisy_stderr)
+    mock_proc.returncode = 0
+    mock_proc.poll.return_value = 0
+
+    progress = MagicMock()
+    with patch("subprocess.Popen", return_value=mock_proc):
+        # Should complete without hanging
+        _run_ffmpeg_with_progress(
+            ["ffmpeg", "-i", "in.mp3", "out.m4a"],
+            label="test",
+            source_duration_s=5.0,
+            progress=progress,
+            task_id=0,  # type: ignore[arg-type]
+        )

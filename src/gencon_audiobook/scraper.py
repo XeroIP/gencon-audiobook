@@ -14,14 +14,13 @@ from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup, Tag
-from rich.console import Console
 
 from .models import Conference, InlineImage, Session, Talk
+from .progress import shared_console as console
 from .progress import standard_progress
 from .utils import USER_AGENT, validate_url
 
 logger = logging.getLogger(__name__)
-console = Console()
 
 _BASE_URL = "https://www.churchofjesuschrist.org"
 _ARCHIVE_PATH = "/study/general-conference"
@@ -60,12 +59,18 @@ def _upgrade_iiif(url: str) -> str:
     url = re.sub(r"/full/!\d+,/", "/full/!800,/", url)
     return url
 
-# Matches /study/general-conference/YYYY/MM/talk-id (individual talk URL).
-# Modern talk slugs use a numeric-prefix + speaker-name format with no hyphens
-# (e.g., "11oaks", "12christofferson"). Session-level links DO contain hyphens
-# (e.g., "saturday-morning-session") and must be excluded — [a-z0-9]+ achieves
-# this. Verified against fixture data; the weekly live test monitors for changes.
-_TALK_URL_RE = re.compile(r"/study/general-conference/\d{4}/\d{2}/[a-z0-9]+(?:\?|$)", re.IGNORECASE)
+# Matches any /study/general-conference/YYYY/MM/slug URL — talk and session links
+# alike. The character class [a-z0-9][-a-z0-9]* covers modern unhyphenated slugs
+# ("11oaks") and older hyphenated ones ("the-work-moves-forward"). Talk vs.
+# session is determined by DOM position in _sessions_from_html, not URL pattern.
+_CONF_URL_RE = re.compile(
+    r"/study/general-conference/\d{4}/\d{2}/[a-z0-9][-a-z0-9]*(?:\?|$)",
+    re.IGNORECASE,
+)
+_VIDEO_360P_RE = re.compile(
+    r"https://assets\.churchofjesuschrist\.org/[a-z0-9]+-360p-en\.mp4",
+    re.IGNORECASE,
+)
 
 
 # Cache of parsed RobotFileParser objects, keyed by scheme+host (e.g. "https://www.churchofjesuschrist.org")
@@ -100,7 +105,7 @@ def _get_robots(http: requests.Session, base_url: str) -> RobotFileParser | None
         parser.parse(response.text.splitlines())
         _robots_cache[base_url] = parser
         logger.debug("Fetched robots.txt from %s", robots_url)
-    except Exception as exc:
+    except (requests.RequestException, OSError) as exc:
         logger.warning("Could not fetch robots.txt from %s: %s — proceeding anyway", robots_url, exc)
         _robots_cache[base_url] = None
 
@@ -237,6 +242,7 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
     """
     if not validate_url(url):
         raise ScraperError(f"URL not on allowlist: {url}")
+    _check_robots(http, url)
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
@@ -257,6 +263,11 @@ def _fetch(http: requests.Session, url: str, delay: float = _REQUEST_DELAY) -> s
                     "Try again later or open a GitHub issue if this persists: "
                     "github.com/XeroIP/gencon-audiobook"
                 )
+
+            if response.status_code == 404:
+                # 404 is deterministic for conference/talk pages — retrying only
+                # hides the real problem behind a misleading connectivity error.
+                raise ScraperError(f"Page not found: {url}")
 
             if response.status_code == 429:
                 # 429 is a transient rate-limit signal — respect Retry-After if present,
@@ -327,7 +338,7 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
         try:
             json_bytes = base64.b64decode(match.group(1))
             return cast(dict[str, Any], json.loads(json_bytes))
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             logger.debug("Failed to base64-decode __INITIAL_STATE__: %s", exc)
 
     # Fallback: raw JSON object (some pages may not encode it)
@@ -343,6 +354,16 @@ def _parse_initial_state(html: str) -> dict[str, Any]:
             logger.debug("Failed to parse __INITIAL_STATE__ as raw JSON: %s", exc)
 
     return {}
+
+
+def _find_video_url(state: dict[str, Any]) -> str | None:
+    """Find a 360p MP4 URL anywhere in decoded page state."""
+    state_text = json.dumps(state, ensure_ascii=False)
+    match = _VIDEO_360P_RE.search(state_text)
+    if not match:
+        return None
+    video_url = match.group(0)
+    return video_url if validate_url(video_url) else None
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +542,7 @@ def parse_conference_listing(html: str) -> list[Session]:
 
     # Fallback: HTML traversal
     if not sessions:
-        logger.warning("Listing JSON selector found nothing; falling back to HTML traversal")
+        logger.debug("Listing JSON selector found nothing; falling back to HTML traversal")
         sessions = _sessions_from_html(html)
         if sessions:
             logger.debug("Listing HTML fallback: %d sessions", len(sessions))
@@ -536,9 +557,17 @@ def parse_conference_listing(html: str) -> list[Session]:
 
 
 def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
-    """Extract sessions from __INITIAL_STATE__ for the conference listing page."""
+    """Extract sessions from __INITIAL_STATE__ for the conference listing page.
+
+    Older conferences (pre-2020) have duplicate sections in the JSON: the real
+    sessions appear first, then a second set of unnamed sections that repeat the
+    same talks with a session landing page prepended. We deduplicate by tracking
+    seen talk URLs — any entry whose URL was already claimed by an earlier session
+    is skipped, and sections that produce zero new talks are dropped entirely.
+    """
     library = state.get("library", {})
     sessions: list[Session] = []
+    seen_urls: set[str] = set()
 
     # Find the library key that matches a conference listing URL
     for key, value in library.items():
@@ -546,17 +575,26 @@ def _sessions_from_state(state: dict[str, Any]) -> list[Session]:
             continue
         raw_sections = value.get("sections", [])
         for i, section in enumerate(raw_sections, start=1):
-            name = section.get("title", f"Session {i}")
+            name = section.get("title")
+            if not name:
+                # Older conferences have unnamed duplicate sections that repeat
+                # every talk from a named session plus a session landing page.
+                # Skip them — real sessions always have titles in the JSON.
+                logger.debug("Skipping unnamed JSON section %d (likely duplicate)", i)
+                continue
             talks: list[Talk] = []
             for entry in section.get("entries", []):
                 uri = entry.get("uri", "")
-                # Skip non-talk entries (e.g., session-level links)
-                if not _TALK_URL_RE.search(uri):
+                # Skip entries that don't look like conference sub-pages
+                if not _CONF_URL_RE.search(uri):
+                    continue
+                talk_url = urljoin(_BASE_URL, uri.split("?")[0])
+                if talk_url in seen_urls:
                     continue
                 title = entry.get("title", "")
                 speaker = entry.get("subtitle", "") or entry.get("author", "")
-                talk_url = urljoin(_BASE_URL, uri.split("?")[0])
                 if title:
+                    seen_urls.add(talk_url)
                     talks.append(Talk(title=title, speaker=speaker, talk_url=talk_url))
             if talks:
                 sessions.append(Session(name=name, number=i, talks=talks))
@@ -620,61 +658,73 @@ def _sessions_from_html(html: str) -> list[Session]:
 
     Observed structure on the Church website (CSS-module class names may change):
 
-        outer_ul
-          <li>Contents link (no sub-ul, skip)</li>
-          <li>                                     <- session LI
-            <a class="sectionTitle-*">Saturday Morning Session</a>
-            inner_ul                               <- talks for this session
-              <li>
-                <a href="/study/general-conference/YYYY/MM/talk-id">
-                  <div class="itemTitle-*">
-                    <p>Talk Title</p>
-                    <p class="subtitle-*">Speaker Name</p>
-                  </div>
-                </a>
-              </li>
-              ...
-          </li>
-          ...
+        <li>                                     <- session LI
+          <a class="sectionTitle-*">Saturday Morning Session</a>
+          <ul>                                   <- talks for this session
+            <li>
+              <a href="/study/general-conference/YYYY/MM/talk-id">
+                <div class="itemTitle-*">
+                  <p>Talk Title</p>
+                  <p class="subtitle-*">Speaker Name</p>
+                </div>
+              </a>
+            </li>
+            ...
+          </ul>
+        </li>
 
-    Navigate to the outer UL by walking up from the first talk link.
+    Session <li> elements are identified by having a direct-child <ul> that contains
+    at least one conference link. This approach works across conference eras without
+    needing to bootstrap a walk from a specific link position.
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    talk_links = soup.find_all("a", href=_TALK_URL_RE)
-    if not talk_links:
+    conf_links = soup.find_all("a", href=_CONF_URL_RE)
+    if not conf_links:
         return []
 
-    # Walk up: talk_a -> talk_li -> inner_ul -> session_li -> outer_ul
-    inner_ul = talk_links[0].find_parent("ul")
-    if not inner_ul:
-        return []
-    session_li = inner_ul.parent
-    outer_ul = session_li.parent if session_li and session_li.name == "li" else None
+    # Find session <li> elements directly: a <li> is a session if it has a
+    # direct-child <ul> that contains at least one conference link.
+    # Bootstrapping from conf_links[0] fails for older conferences where the
+    # first link in document order is a session landing page (in the outer UL),
+    # not a talk (in the inner UL).
+    session_lis: list[Tag] = []
+    for li in soup.find_all("li"):
+        if not isinstance(li, Tag):
+            continue
+        sub_ul = li.find("ul", recursive=False)
+        if isinstance(sub_ul, Tag) and sub_ul.find("a", href=_CONF_URL_RE):
+            session_lis.append(li)
 
     sessions: list[Session] = []
     session_number = 0
 
-    if outer_ul and outer_ul.name in ("ul", "ol"):
-        for li in outer_ul.find_all("li", recursive=False):
-            sub_ul = li.find("ul")
-            if not sub_ul:
-                # "Contents" or other non-session entry — skip
+    if session_lis:
+        for li in session_lis:
+            sub_ul = li.find("ul", recursive=False)
+            if not isinstance(sub_ul, Tag):
                 continue
 
-            # Session name: first <a> that is NOT a talk link
+            # Session name: direct-child <a> of the session <li> (the session heading link).
+            # URL matching is not used — all conf URLs look alike; DOM position distinguishes
+            # session <li> from talk <li>. Fall back to <h4> for older HTML that uses headings.
             session_name: str | None = None
             for a in li.find_all("a", recursive=False):
-                if not _TALK_URL_RE.search(a.get("href", "")):
-                    session_name = a.get_text(strip=True)
-                    break
-
+                session_name = a.get_text(strip=True)
+                break
             if not session_name:
-                session_name = f"Session {session_number + 1}"
+                h4 = li.find("h4", recursive=False)
+                if isinstance(h4, Tag):
+                    session_name = h4.get_text(strip=True)
+            if not session_name:
+                # Unnamed session LIs are duplicates — the site renders each session twice:
+                # once with a direct-child <a> holding the name, once with a <div> and no name.
+                # Skip the unnamed copies.
+                continue
 
             talks: list[Talk] = []
             for talk_li in sub_ul.find_all("li", recursive=False):
-                talk_a = talk_li.find("a", href=_TALK_URL_RE)
+                talk_a = talk_li.find("a", href=_CONF_URL_RE)
                 if not talk_a:
                     continue
                 title = _extract_talk_title(talk_a)
@@ -691,7 +741,7 @@ def _sessions_from_html(html: str) -> list[Session]:
     if not sessions:
         logger.warning("No session structure detected; grouping all talks under one session")
         all_talks: list[Talk] = []
-        for a in talk_links:
+        for a in conf_links:
             title = _extract_talk_title(a)
             speaker = _extract_talk_speaker(a)
             if title:
@@ -709,20 +759,21 @@ def _sessions_from_html(html: str) -> list[Session]:
 
 
 def parse_talk_page(html: str, talk_url: str) -> dict:
-    """Extract mp3_url, transcript_html, speaker_image_url, speaker, and inline_images from a talk page.
+    """Extract media, transcript, speaker, and inline images from a talk page.
 
     Args:
         html: HTML content of the individual talk page.
         talk_url: URL of this talk page (used only for logging).
 
     Returns:
-        Dict with keys: mp3_url, transcript_html, speaker_image_url, speaker,
-        inline_images. String values may be None if not found; inline_images
-        is always a list (possibly empty).
+        Dict with keys: mp3_url, video_url, transcript_html, speaker_image_url,
+        speaker, inline_images. String values may be None if not found;
+        inline_images is always a list (possibly empty).
     """
     soup = BeautifulSoup(html, "html.parser")
     result: dict = {
         "mp3_url": None,
+        "video_url": None,
         "transcript_html": None,
         "speaker_image_url": None,
         "speaker": None,
@@ -732,6 +783,10 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
     # MP3 URL — primary: reader.contentStore[*].meta.audio[0].mediaUrl in __INITIAL_STATE__
     # The Church website embeds the audio URL in JS state; the HTML player is rendered client-side.
     state = _parse_initial_state(html)
+    result["video_url"] = _find_video_url(state)
+    if result["video_url"]:
+        logger.debug("video_url (state scan): %s", result["video_url"])
+
     content_store = state.get("reader", {}).get("contentStore", {})
     for _key, entry in content_store.items():
         audio_list = entry.get("meta", {}).get("audio", [])
@@ -767,7 +822,17 @@ def parse_talk_page(html: str, talk_url: str) -> dict:
     # Transcript — primary: div.body-block
     body = soup.find("div", class_="body-block")
     if body:
-        result["transcript_html"] = str(body)
+        transcript_parts = [str(body)]
+        # The Church site places footnote bodies in <footer class="notes">, which is a
+        # sibling of div.body-block, not inside it. Append its HTML so the EPUB builder
+        # has the note bodies it needs to render footnotes. Guard against duplication:
+        # only append when the primary selector (not the article fallback) was used,
+        # since article fallbacks already capture the full article including the footer.
+        notes_footer = soup.find("footer", class_="notes")
+        if notes_footer:
+            transcript_parts.append(str(notes_footer))
+            logger.debug("transcript: appended footer.notes (%d chars)", len(str(notes_footer)))
+        result["transcript_html"] = "".join(transcript_parts)
         logger.debug("transcript (primary div.body-block): %d chars", len(result["transcript_html"] or ""))
 
     if not result["transcript_html"]:
@@ -960,6 +1025,7 @@ def scrape_conference(conference_url: str) -> Conference:
                     talk.speaker = data["speaker"]
 
                 talk.mp3_url = data["mp3_url"]
+                talk.video_url = data["video_url"]
                 talk.transcript_html = data["transcript_html"]
                 talk.speaker_image_url = data["speaker_image_url"]
                 talk.inline_images = data["inline_images"]
@@ -974,7 +1040,7 @@ def scrape_conference(conference_url: str) -> Conference:
                     missing.append("mp3_url")
 
                 if missing:
-                    logger.error(
+                    logger.warning(
                         "Talk at %s missing required fields: %s — skipping",
                         talk.talk_url,
                         ", ".join(missing),

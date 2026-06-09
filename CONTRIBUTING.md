@@ -50,6 +50,9 @@ pytest tests/ --ignore=tests/test_scraper_live.py --ignore=tests/test_integratio
 pytest tests/ --ignore=tests/test_scraper_live.py --ignore=tests/test_integration.py \
     --cov=gencon_audiobook --cov-report=term-missing
 
+# Build source and wheel distributions
+python -m build
+
 # Live smoke tests (hits the real website — use sparingly)
 pytest tests/test_scraper_live.py -v -m live
 

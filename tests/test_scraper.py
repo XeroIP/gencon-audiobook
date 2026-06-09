@@ -6,6 +6,8 @@ or after the Church website structure changes.
 
 from __future__ import annotations
 
+import base64
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -157,6 +159,39 @@ def test_parse_talk_page_mp3_url_passes_validate_url():
         f"mp3_url should pass validate_url(), got {data['mp3_url']!r}"
 
 
+def test_parse_talk_page_extracts_video_url_from_decoded_state():
+    video_url = "https://assets.churchofjesuschrist.org/utshiqnoy1y8xchu1tdwi860yku3zl2jw56xcbbx-360p-en.mp4"
+    state = {
+        "reader": {
+            "contentStore": {
+                "talk": {
+                    "meta": {
+                        "audio": [{"mediaUrl": "https://assets.churchofjesuschrist.org/audio-32k-en.mp3"}],
+                        "video": [{"mediaUrl": video_url}],
+                    }
+                }
+            }
+        }
+    }
+    encoded = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+    html = f'<html><body><script>window.__INITIAL_STATE__ = "{encoded}"</script></body></html>'
+
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+
+    assert data["video_url"] == video_url
+
+
+def test_parse_talk_page_video_url_regex_accepts_uppercase_hash():
+    video_url = "https://assets.churchofjesuschrist.org/59C8428CEF2EDDFAB2352EF6F3011D57B4772C28-360p-en.mp4"
+    state = {"video": {"url": video_url}}
+    encoded = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+    html = f'<html><body><script>window.__INITIAL_STATE__ = "{encoded}"</script></body></html>'
+
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
+
+    assert data["video_url"] == video_url
+
+
 def test_parse_talk_page_extracts_transcript():
     html = _load("talk_page.html")
     data = parse_talk_page(html, "https://www.churchofjesuschrist.org/test")
@@ -268,6 +303,28 @@ def test_parse_talk_page_deduplicates_inline_images():
     assert len(data["inline_images"]) == 1, "Duplicate asset_id should be deduplicated"
 
 
+def test_parse_talk_page_captures_footnote_bodies_from_footer():
+    """footer.notes content must appear in transcript_html so the EPUB builder can render it.
+
+    The Church site places footnote bodies in <footer class="notes"> as a sibling of
+    <div class="body-block">, not inside it. parse_talk_page() must capture both
+    so the EPUB builder has the note bodies it needs.
+    """
+    html = _load("talk_page_with_notes.html")
+    data = parse_talk_page(html, "https://www.churchofjesuschrist.org/study/general-conference/2024/04/31bowen?lang=eng")
+    transcript = data["transcript_html"] or ""
+    assert 'id="note1"' in transcript, (
+        "Footnote body id='note1' must be present in transcript_html"
+    )
+    assert 'id="note2"' in transcript, (
+        "Footnote body id='note2' must be present in transcript_html"
+    )
+    # Verify note content survived
+    assert "Matthew 16" in transcript, (
+        "Footnote body text must be present in transcript_html"
+    )
+
+
 # ---------------------------------------------------------------------------
 # robots.txt (#23)
 # ---------------------------------------------------------------------------
@@ -283,6 +340,17 @@ def _make_http_session(robots_text: str, status: int = 200) -> MagicMock:
     session = MagicMock()
     session.get.return_value = mock_response
     return session
+
+
+def _add_robots_response(body: str = "User-agent: *\nDisallow:\n") -> None:
+    """Register an allow-all robots.txt response for _fetch tests."""
+    reset_robots_cache()
+    responses_lib.add(
+        responses_lib.GET,
+        "https://www.churchofjesuschrist.org/robots.txt",
+        status=200,
+        body=body,
+    )
 
 
 def test_check_robots_allows_permitted_url() -> None:
@@ -363,6 +431,7 @@ def test_fetch_retries_on_429_then_succeeds() -> None:
     url = "https://www.churchofjesuschrist.org/study/general-conference"
     minimal_html = "<html><body>" + "x" * 1200 + "</body></html>"
 
+    _add_robots_response()
     responses_lib.add(responses_lib.GET, url, status=429, body="Too Many Requests")
     responses_lib.add(responses_lib.GET, url, status=200, body=minimal_html)
 
@@ -380,6 +449,7 @@ def test_fetch_403_raises_immediately_without_retry() -> None:
     from gencon_audiobook.scraper import _fetch
 
     url = "https://www.churchofjesuschrist.org/study/general-conference"
+    _add_robots_response()
     responses_lib.add(responses_lib.GET, url, status=403, body="Forbidden")
     # Only one response registered — if retry occurs, responses_lib raises ConnectionError
 
@@ -388,9 +458,28 @@ def test_fetch_403_raises_immediately_without_retry() -> None:
         with pytest.raises(ScraperError, match="403"):
             _fetch(session, url)
 
-    assert len(responses_lib.calls) == 1, (
-        f"403 must not be retried — expected 1 request, got {len(responses_lib.calls)}"
+    assert len(responses_lib.calls) == 2, (
+        f"403 must not be retried — expected robots + 1 request, got {len(responses_lib.calls)}"
     )
+
+
+@responses_lib.activate
+def test_fetch_enforces_robots_txt_before_request() -> None:
+    """_fetch must enforce robots.txt, not just direct _check_robots() calls."""
+    from gencon_audiobook.scraper import _fetch
+
+    url = "https://www.churchofjesuschrist.org/study/general-conference/2024/04"
+    _add_robots_response("User-agent: *\nDisallow: /study/general-conference/\n")
+    responses_lib.add(responses_lib.GET, url, status=200, body="x" * 1200)
+
+    session = _scraper_make_session()
+    with pytest.raises(ScraperError, match="disallowed by robots.txt"):
+        _fetch(session, url)
+
+    assert len(responses_lib.calls) == 1, (
+        "_fetch should stop after robots.txt and never request a disallowed page"
+    )
+    assert responses_lib.calls[0].request.url.endswith("/robots.txt")
 
 
 # ---------------------------------------------------------------------------
@@ -485,3 +574,40 @@ def test_upgrade_iiif_leaves_non_iiif_url_unchanged() -> None:
     assert _upgrade_iiif(url) == url, (
         f"Non-IIIF URL must pass through unchanged, got: {_upgrade_iiif(url)!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _CONF_URL_RE
+# ---------------------------------------------------------------------------
+
+
+def test_conf_url_re_matches_modern_slug() -> None:
+    """_CONF_URL_RE must match modern (no-hyphen) talk slugs."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04/11oaks"
+    assert _CONF_URL_RE.search(url), f"Expected match for modern slug: {url!r}"
+
+
+def test_conf_url_re_matches_hyphenated_slug() -> None:
+    """_CONF_URL_RE must match pre-2020 hyphenated talk slugs (the old bug)."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/1999/04/the-work-moves-forward"
+    assert _CONF_URL_RE.search(url), f"Expected match for hyphenated slug: {url!r}"
+
+
+def test_conf_url_re_matches_session_slug() -> None:
+    """Session slugs also match _CONF_URL_RE — DOM position distinguishes sessions from talks."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04/saturday-morning-session"
+    assert _CONF_URL_RE.search(url), f"Expected match for session slug: {url!r}"
+
+
+def test_conf_url_re_rejects_archive_url() -> None:
+    """_CONF_URL_RE must not match the top-level archive URL (no talk slug)."""
+    from gencon_audiobook.scraper import _CONF_URL_RE
+
+    url = "/study/general-conference/2024/04"
+    assert not _CONF_URL_RE.search(url), f"Should not match bare conference URL: {url!r}"

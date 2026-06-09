@@ -29,6 +29,7 @@ class Talk:
         speaker: Speaker's full name.
         talk_url: URL of the talk page on churchofjesuschrist.org.
         mp3_url: URL of the MP3 audio file, if available.
+        video_url: URL of the 360p MP4 video file, if available.
         transcript_html: Raw HTML transcript, if available.
         speaker_image_url: URL of the speaker photo, if available.
         session_name: Name of the session this talk belongs to.
@@ -42,6 +43,7 @@ class Talk:
     speaker: str
     talk_url: str
     mp3_url: str | None = None
+    video_url: str | None = None
     transcript_html: str | None = None
     speaker_image_url: str | None = None
     inline_images: list[InlineImage] = field(default_factory=list)
