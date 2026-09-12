@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Video-audio decision banners are styled so important warning/active states stand out without coloring the full prompt body.
+- Talk pages are now scraped concurrently (4 workers) instead of one at a time, cutting scraping time roughly 4x for large conferences.
 
 ## [0.2.0rc1] - 2026-04-29
 

@@ -19,12 +19,14 @@ from gencon_audiobook.scraper import (
     _check_robots,
     _find_cover_image,
     _get_robots,
-    _make_http_session as _scraper_make_session,
-    _robots_cache,
     parse_conference_archive,
     parse_conference_listing,
     parse_talk_page,
     reset_robots_cache,
+    scrape_conference,
+)
+from gencon_audiobook.scraper import (
+    _make_http_session as _scraper_make_session,
 )
 from gencon_audiobook.utils import validate_url
 
@@ -611,3 +613,75 @@ def test_conf_url_re_rejects_archive_url() -> None:
 
     url = "/study/general-conference/2024/04"
     assert not _CONF_URL_RE.search(url), f"Should not match bare conference URL: {url!r}"
+
+
+# ---------------------------------------------------------------------------
+# scrape_conference — parallel talk-page fetch (#152)
+# ---------------------------------------------------------------------------
+
+_CONFERENCE_URL = "https://www.churchofjesuschrist.org/study/general-conference/2026/04"
+
+
+def _register_conference_scrape(bad_talk_url: str | None = None) -> list[str]:
+    """Mock robots.txt, the listing page, and every talk page for _CONFERENCE_URL.
+
+    All talk pages return the talk_page.html fixture except bad_talk_url, which
+    returns a 404. Returns the list of talk URLs found in the listing.
+    """
+    _add_robots_response()
+    listing_html = _load("conference_listing.html")
+    responses_lib.add(responses_lib.GET, _CONFERENCE_URL, status=200, body=listing_html)
+
+    talk_html = _load("talk_page.html")
+    talk_urls = [t.talk_url for s in parse_conference_listing(listing_html) for t in s.talks]
+    for talk_url in talk_urls:
+        if talk_url == bad_talk_url:
+            responses_lib.add(responses_lib.GET, talk_url, status=404)
+        else:
+            responses_lib.add(responses_lib.GET, talk_url, status=200, body=talk_html)
+    return talk_urls
+
+
+@responses_lib.activate
+def test_scrape_conference_populates_all_talks_in_parallel() -> None:
+    """Every talk is scraped and populated even though pages fetch concurrently."""
+    talk_urls = _register_conference_scrape()
+
+    conference = scrape_conference(_CONFERENCE_URL)
+
+    all_talks = [t for s in conference.sessions for t in s.talks]
+    assert len(all_talks) == len(talk_urls), (
+        f"Expected {len(talk_urls)} talks, got {len(all_talks)}"
+    )
+    assert all(t.mp3_url for t in all_talks), "Every talk should have an mp3_url populated"
+
+
+@responses_lib.activate
+def test_scrape_conference_preserves_talk_index_order() -> None:
+    """talk_index stays sequential in listing order regardless of fetch completion order."""
+    _register_conference_scrape()
+
+    conference = scrape_conference(_CONFERENCE_URL)
+
+    all_talks = [t for s in conference.sessions for t in s.talks]
+    indexes = [t.talk_index for t in all_talks]
+    assert indexes == list(range(1, len(all_talks) + 1)), (
+        f"talk_index must be sequential in listing order, got {indexes}"
+    )
+
+
+@responses_lib.activate
+def test_scrape_conference_skips_talk_on_fetch_error() -> None:
+    """A single talk page failing to fetch must not fail the whole conference scrape."""
+    listing_html = _load("conference_listing.html")
+    all_urls = [t.talk_url for s in parse_conference_listing(listing_html) for t in s.talks]
+    bad_url = all_urls[len(all_urls) // 2]
+    _register_conference_scrape(bad_talk_url=bad_url)
+
+    conference = scrape_conference(_CONFERENCE_URL)
+
+    all_talks = [t for s in conference.sessions for t in s.talks]
+    bad_talk = next(t for t in all_talks if t.talk_url == bad_url)
+    assert bad_talk.mp3_url is None, "The talk whose page failed to fetch must be skipped"
+    good_talks = [t for t in all_talks if t.talk_url != bad_url]
+    assert all(t.mp3_url for t in good_talks), "All other talks must still be populated"

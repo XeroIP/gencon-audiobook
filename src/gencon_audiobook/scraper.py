@@ -6,7 +6,9 @@ import base64
 import json
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, cast  # JSON decode returns Any; no narrower type available
 from urllib.parse import urljoin, urlparse
@@ -31,6 +33,12 @@ _READ_TIMEOUT = 30
 _MAX_RETRIES = 3
 _MIN_RESPONSE_LENGTH = 1000   # responses shorter than this are suspiciously small
 _CLOUDFLARE_PAGE_LENGTH = 5000  # challenge pages are tiny; real pages are much larger
+_SCRAPE_WORKERS = 4  # concurrent talk-page scrape threads; keeps aggregate rate polite
+
+# Thread-local storage so each worker gets its own requests.Session.
+# requests.Session is NOT thread-safe; sharing one across threads causes
+# intermittent connection errors and garbled responses.
+_thread_locals: threading.local = threading.local()
 
 # Matches /study/general-conference/YYYY/MM (conference listing URL)
 # Allows trailing query strings like ?lang=eng
@@ -164,6 +172,17 @@ def _make_http_session() -> requests.Session:
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     return session
+
+
+def _get_thread_session() -> requests.Session:
+    """Return the requests.Session for the current thread, creating it on first access.
+
+    Each thread gets its own Session because requests.Session is not thread-safe.
+    """
+    if not hasattr(_thread_locals, "session"):
+        _thread_locals.session = _make_http_session()
+    # threading.local attributes are typed as Any; cast makes the return type explicit.
+    return cast(requests.Session, _thread_locals.session)
 
 
 def _decode_response(response: requests.Response) -> str:
@@ -961,6 +980,58 @@ def fetch_available_conferences() -> list[ConferenceRef]:
     return parse_conference_archive(html)
 
 
+def _scrape_one_talk(talk: Talk) -> Talk | None:
+    """Fetch and parse one talk page, mutating talk in place.
+
+    Runs as a ThreadPoolExecutor worker: uses a thread-local session so
+    concurrent calls never share a requests.Session.
+
+    Args:
+        talk: Talk to populate. Mutated in place with scraped fields.
+
+    Returns:
+        talk if it should be skipped (missing required fields or a scrape
+        error), or None if it scraped successfully.
+    """
+    logger.debug("Scraping talk %d: %s", talk.talk_index, talk.talk_url)
+    try:
+        http = _get_thread_session()
+        talk_html = _fetch(http, talk.talk_url)
+        data = parse_talk_page(talk_html, talk.talk_url)
+
+        # Use speaker from talk page if listing didn't provide one
+        if not talk.speaker and data["speaker"]:
+            talk.speaker = data["speaker"]
+
+        talk.mp3_url = data["mp3_url"]
+        talk.video_url = data["video_url"]
+        talk.transcript_html = data["transcript_html"]
+        talk.speaker_image_url = data["speaker_image_url"]
+        talk.inline_images = data["inline_images"]
+
+        # Validate required fields
+        missing = []
+        if not talk.title:
+            missing.append("title")
+        if not talk.speaker:
+            missing.append("speaker")
+        if not talk.mp3_url or not validate_url(talk.mp3_url):
+            missing.append("mp3_url")
+
+        if missing:
+            logger.warning(
+                "Talk at %s missing required fields: %s — skipping",
+                talk.talk_url,
+                ", ".join(missing),
+            )
+            return talk
+        return None
+
+    except ScraperError as exc:
+        logger.error("Failed to scrape talk %s: %s", talk.talk_url, exc)
+        return talk
+
+
 def scrape_conference(conference_url: str) -> Conference:
     """Scrape a single conference: parse listing, then fetch each talk page.
 
@@ -1004,7 +1075,8 @@ def scrape_conference(conference_url: str) -> Conference:
             talk.talk_index = talk_index
             talk_index += 1
 
-    # Fetch each talk page
+    # Fetch each talk page. Talks are independent, so pages are scraped
+    # concurrently — each worker uses its own thread-local session.
     all_talks = [t for s in sessions for t in s.talks]
     valid_count = 0
     skipped: list[Talk] = []
@@ -1013,47 +1085,19 @@ def scrape_conference(conference_url: str) -> Conference:
     scrape_progress = standard_progress()
     with scrape_progress:
         task = scrape_progress.add_task("Scraping talks", total=len(all_talks))
-        for i, talk in enumerate(all_talks, start=1):
-            scrape_progress.update(task, description=talk.title[:60])
-            logger.debug("Scraping talk %d/%d: %s", i, len(all_talks), talk.title)
-            try:
-                talk_html = _fetch(http, talk.talk_url)
-                data = parse_talk_page(talk_html, talk.talk_url)
-
-                # Use speaker from talk page if listing didn't provide one
-                if not talk.speaker and data["speaker"]:
-                    talk.speaker = data["speaker"]
-
-                talk.mp3_url = data["mp3_url"]
-                talk.video_url = data["video_url"]
-                talk.transcript_html = data["transcript_html"]
-                talk.speaker_image_url = data["speaker_image_url"]
-                talk.inline_images = data["inline_images"]
-
-                # Validate required fields
-                missing = []
-                if not talk.title:
-                    missing.append("title")
-                if not talk.speaker:
-                    missing.append("speaker")
-                if not talk.mp3_url or not validate_url(talk.mp3_url):
-                    missing.append("mp3_url")
-
-                if missing:
-                    logger.warning(
-                        "Talk at %s missing required fields: %s — skipping",
-                        talk.talk_url,
-                        ", ".join(missing),
-                    )
-                    skipped.append(talk)
-                else:
-                    valid_count += 1
-
-            except ScraperError as exc:
-                logger.error("Failed to scrape talk %s: %s", talk.talk_url, exc)
-                skipped.append(talk)
-            finally:
-                scrape_progress.advance(task)
+        if all_talks:
+            workers = min(_SCRAPE_WORKERS, len(all_talks))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(_scrape_one_talk, talk): talk for talk in all_talks
+                }
+                for future in as_completed(futures):
+                    skipped_talk = future.result()
+                    if skipped_talk is not None:
+                        skipped.append(skipped_talk)
+                    else:
+                        valid_count += 1
+                    scrape_progress.advance(task)
 
     if skipped:
         logger.warning("%d talk(s) skipped due to missing fields or errors", len(skipped))
