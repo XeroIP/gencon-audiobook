@@ -6,7 +6,6 @@ import base64
 import json
 import logging
 import re
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -20,7 +19,7 @@ from bs4 import BeautifulSoup, Tag
 from .models import Conference, InlineImage, Session, Talk
 from .progress import shared_console as console
 from .progress import standard_progress
-from .utils import USER_AGENT, validate_url
+from .utils import USER_AGENT, get_thread_session, make_session, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +33,6 @@ _MAX_RETRIES = 3
 _MIN_RESPONSE_LENGTH = 1000   # responses shorter than this are suspiciously small
 _CLOUDFLARE_PAGE_LENGTH = 5000  # challenge pages are tiny; real pages are much larger
 _SCRAPE_WORKERS = 4  # concurrent talk-page scrape threads; keeps aggregate rate polite
-
-# Thread-local storage so each worker gets its own requests.Session.
-# requests.Session is NOT thread-safe; sharing one across threads causes
-# intermittent connection errors and garbled responses.
-_thread_locals: threading.local = threading.local()
 
 # Matches /study/general-conference/YYYY/MM (conference listing URL)
 # Allows trailing query strings like ?lang=eng
@@ -165,24 +159,6 @@ class ScraperError(Exception):
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_http_session() -> requests.Session:
-    """Create a requests.Session with the project User-Agent header."""
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    return session
-
-
-def _get_thread_session() -> requests.Session:
-    """Return the requests.Session for the current thread, creating it on first access.
-
-    Each thread gets its own Session because requests.Session is not thread-safe.
-    """
-    if not hasattr(_thread_locals, "session"):
-        _thread_locals.session = _make_http_session()
-    # threading.local attributes are typed as Any; cast makes the return type explicit.
-    return cast(requests.Session, _thread_locals.session)
 
 
 def _decode_response(response: requests.Response) -> str:
@@ -973,7 +949,7 @@ def fetch_available_conferences() -> list[ConferenceRef]:
     Raises:
         ScraperError: if the archive page cannot be fetched or parsed.
     """
-    http = _make_http_session()
+    http = make_session()
     url = _BASE_URL + _ARCHIVE_PATH
     _check_robots(http, url)
     html = _fetch(http, url)
@@ -995,7 +971,7 @@ def _scrape_one_talk(talk: Talk) -> Talk | None:
     """
     logger.debug("Scraping talk %d: %s", talk.talk_index, talk.talk_url)
     try:
-        http = _get_thread_session()
+        http = get_thread_session()
         talk_html = _fetch(http, talk.talk_url)
         data = parse_talk_page(talk_html, talk.talk_url)
 
@@ -1048,7 +1024,7 @@ def scrape_conference(conference_url: str) -> Conference:
     Raises:
         ScraperError: if the conference page fails or zero valid talks are found.
     """
-    http = _make_http_session()
+    http = make_session()
     _check_robots(http, conference_url)
 
     # Fetch and parse conference listing

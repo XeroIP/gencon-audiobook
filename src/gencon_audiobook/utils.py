@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from typing import cast
 from urllib.parse import urlparse
+
+import requests
 
 from . import __version__
 
@@ -32,6 +36,31 @@ _ALLOWED_HOSTNAMES = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE,
 )
+
+# Thread-local storage so each worker thread gets its own requests.Session.
+# requests.Session is NOT thread-safe; sharing one across threads causes
+# intermittent connection errors and garbled responses. Shared across all
+# modules' ThreadPoolExecutor workers since a Session is generic — no module
+# needs its own cache.
+_thread_locals: threading.local = threading.local()
+
+
+def make_session() -> requests.Session:
+    """Create a requests.Session with the project User-Agent header."""
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    return session
+
+
+def get_thread_session() -> requests.Session:
+    """Return the requests.Session for the current thread, creating it on first access.
+
+    Each thread gets its own Session because requests.Session is not thread-safe.
+    """
+    if not hasattr(_thread_locals, "session"):
+        _thread_locals.session = make_session()
+    # threading.local attributes are typed as Any; cast makes the return type explicit.
+    return cast(requests.Session, _thread_locals.session)
 
 
 def sanitize_filename(name: str) -> str:

@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
-from typing import cast
 
 import requests
 from PIL import Image
@@ -19,7 +17,7 @@ from PIL import Image
 from .models import Conference, Talk
 from .progress import shared_console as _console
 from .progress import standard_progress
-from .utils import USER_AGENT, sanitize_filename, validate_url
+from .utils import get_thread_session, make_session, sanitize_filename, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +25,6 @@ _DOWNLOAD_CHUNK_SIZE = 65_536  # 64 KB chunks for streaming downloads
 _JPEG_QUALITY = 85              # JPEG quality for converted images
 _IMAGE_WORKERS = 8              # concurrent image download threads
 _VIDEO_EXTRACT_TIMEOUT = 60 * 60 * 2
-
-# Thread-local storage so each worker gets its own requests.Session.
-# requests.Session is NOT thread-safe; sharing one across threads causes
-# intermittent connection errors and garbled responses.
-_thread_locals: threading.local = threading.local()
 
 
 class DownloadError(Exception):
@@ -306,24 +299,6 @@ def cleanup_tmp_files(directory: Path) -> None:
             logger.warning("Could not remove tmp file %s: %s", tmp, exc)
 
 
-def _make_session() -> requests.Session:
-    """Create a requests.Session with the project User-Agent."""
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    return session
-
-
-def _get_thread_session() -> requests.Session:
-    """Return the requests.Session for the current thread, creating it on first access.
-
-    Each thread gets its own Session because requests.Session is not thread-safe.
-    """
-    if not hasattr(_thread_locals, "session"):
-        _thread_locals.session = _make_session()
-    # threading.local attributes are typed as Any; cast makes the return type explicit.
-    return cast(requests.Session, _thread_locals.session)
-
-
 def _audio_path(output_dir: Path, talk: Talk) -> Path:
     """Return the destination path for a talk's MP3."""
     name = sanitize_filename(talk.title)
@@ -454,7 +429,7 @@ def download_conference(
     if prefer_video_audio and ffmpeg_path is None:
         raise ValueError("ffmpeg_path is required when prefer_video_audio=True")
 
-    session = _make_session()
+    session = make_session()
     talks = conference.talks
 
     # talk is set for audio items so failed talks can be returned to the caller.
@@ -543,7 +518,7 @@ def download_conference(
         overall_task = overall_progress.add_task("Downloading files", total=len(queue))
 
         # Images: parallel downloads via ThreadPoolExecutor.
-        # Each worker creates its own session via _get_thread_session() because
+        # Each worker creates its own session via get_thread_session() because
         # requests.Session is not thread-safe.
         if image_queue:
 
@@ -551,7 +526,7 @@ def download_conference(
                 """Worker: download one image. Returns (was_downloaded, label_on_failure)."""
                 try:
                     was_downloaded = _download_image(
-                        item.url, item.dest, _get_thread_session(), retries=3
+                        item.url, item.dest, get_thread_session(), retries=3
                     )
                     return was_downloaded, None
                 except (DownloadError, ValueError) as exc:
