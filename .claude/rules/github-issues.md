@@ -155,6 +155,10 @@ gh issue create \
 - **One issue per logical change.** Do not bundle unrelated work into one issue.
 - **Always include `Closes #N` in the PR description body** (not the commit message)
   when a PR resolves an issue. GitHub reads the PR body to auto-close issues on merge.
+- **PRs target `main` directly** — there is no `dev`/staging branch. `Closes #N` only
+  auto-fires on merges into the repository's default branch (`main`); routing PRs through
+  an intermediate branch left 13 issues open for months after they'd already shipped
+  (issue #181). Pre-release testing happens via tagged `rcN` PyPI releases, not a branch.
 - **Cosmetic fixes** (typos, whitespace) are the only exception to the "issue first" rule.
 - **Do not create duplicate issues.** Search open issues before creating a new one.
 - **Labels must match the title prefix.** If the label does not exist, create it with

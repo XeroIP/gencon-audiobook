@@ -101,3 +101,4 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: ${{ steps.changelog.outputs.body }}
+          prerelease: ${{ contains(github.ref_name, 'rc') }}

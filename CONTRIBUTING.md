@@ -26,6 +26,19 @@ cosmetic fixes (typos, whitespace).
   intentional; see the [Technical Decisions](https://github.com/XeroIP/gencon-audiobook/wiki/Technical-Decisions) wiki page
 - Reformatting or style-only PRs
 
+## Branching and releases
+
+There is no long-lived `dev` or staging branch — PRs merge directly to `main` (trunk-based
+development). This is deliberate: GitHub only honors `Closes #N` on merges into the repository's
+default branch, so routing PRs through an intermediate branch left issues open for months after
+their fixes had already shipped (see issue #181).
+
+To try out code before it's an official stable release, install an `rcN` pre-release from PyPI
+once one is cut (e.g. `pip install gencon-audiobook==0.3.0rc1`, or `pip install --pre
+gencon-audiobook` for the latest pre-release). These are tagged `vX.Y.ZrcN`, published the same
+way as stable releases, and marked "Pre-release" on the GitHub Releases page. See
+`docs/release-testing.md` for the pre-release smoke-test checklist.
+
 ## Development setup
 
 ```bash
