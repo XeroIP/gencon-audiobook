@@ -25,9 +25,7 @@ from gencon_audiobook.scraper import (
     reset_robots_cache,
     scrape_conference,
 )
-from gencon_audiobook.scraper import (
-    _make_http_session as _scraper_make_session,
-)
+from gencon_audiobook.utils import make_session as _scraper_make_session
 from gencon_audiobook.utils import validate_url
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
