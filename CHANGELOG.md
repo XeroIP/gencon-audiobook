@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0rc2] - 2026-09-11
+
+`0.2.0rc1` was never tagged or published; this is the first published candidate for 0.2.0 and
+includes everything below relative to 0.1.8.
+
 ### Added
+- `--prefer-video-audio` flag: when a conference's 360p video audio is better than the MP3 source, the tool can extract the 96 kbps AAC track from video instead of downloading lower-quality MP3 audio. The default run warns before downloading, the opt-in path shows estimated download/audio-cache sizes, and newer conferences with better MP3 audio are protected from downgrade.
+- EPUB table-of-contents entries now include speaker names.
+- Completion reports now include session count and session names.
 - Progress indicators now show elapsed time on long-running progress bars and spinner phases.
 - Download status messages now show audio/image count breakdowns.
 
 ### Fixed
+- Scraper fetches now enforce robots.txt through the shared `_fetch()` path, matching the documented behavior.
 - `--prefer-video-audio` extraction now writes `.m4a.tmp` files with an explicit ffmpeg muxer, fixing Windows extraction failures where ffmpeg could not infer the output format.
 - `--prefer-video-audio` now falls back to the MP3 URL for an individual talk if video-audio extraction fails.
 - Fully cached `--prefer-video-audio` reruns skip the heavy download confirmation and avoid misleading no-op timing output.
@@ -23,16 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Video-audio decision banners are styled so important warning/active states stand out without coloring the full prompt body.
 - Talk pages are now scraped concurrently (4 workers) instead of one at a time, cutting scraping time roughly 4x for large conferences.
-
-## [0.2.0rc1] - 2026-04-29
-
-### Added
-- `--prefer-video-audio` flag: when a conference's 360p video audio is better than the MP3 source, the tool can extract the 96 kbps AAC track from video instead of downloading lower-quality MP3 audio. The default run warns before downloading, the opt-in path shows estimated download/audio-cache sizes, and newer conferences with better MP3 audio are protected from downgrade.
-- EPUB table-of-contents entries now include speaker names.
-- Completion reports now include session count and session names.
-
-### Fixed
-- Scraper fetches now enforce robots.txt through the shared `_fetch()` path, matching the documented behavior.
 
 ## [0.1.8] - 2026-04-28
 
@@ -178,8 +177,8 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc1...HEAD
-[0.2.0rc1]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0rc1
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc2...HEAD
+[0.2.0rc2]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0rc2
 [0.1.8]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...v0.1.6
