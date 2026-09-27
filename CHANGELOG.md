@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--allow-partial` flag: build a conference that is still being published from the talks posted so far. The completion report marks the build as PARTIAL and prints the command to rebuild the full conference later; partial builds are never cached (#191).
+
+### Fixed
+- Running with no `--conference` before a newly announced conference is published no longer fails with "The website structure may have changed". The tool reports that the conference has not been published yet and uses the previous one; `--conference` for an unpublished conference exits with a clear "not published yet" message (#191).
+- A conference that is only partly published is no longer built and cached as if complete. The tool lists the missing talks and stops before downloading anything unless `--allow-partial` is passed, so re-running once the talks are posted produces the complete audiobook and EPUB. Caches written by earlier versions while a conference was incomplete are ignored and re-scraped (#191).
+- Session placeholder pages are no longer fetched and parsed as talks, removing a burst of misleading selector warnings (#191).
+- `scripts/update_fixtures.py` works again (it imported a helper removed in #183) and skips a conference that is not published yet (#191).
+- Live smoke tests target the newest fully published conference instead of failing whenever the next conference is listed early (#191).
+
 ## [0.2.0rc2] - 2026-09-11
 
 `0.2.0rc1` was never tagged or published; this is the first published candidate for 0.2.0 and

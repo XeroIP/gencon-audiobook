@@ -2,7 +2,31 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
+from datetime import date
+
+from .utils import validate_url
+
+
+def conference_may_still_be_publishing(year: int, month: int, today: date | None = None) -> bool:
+    """Return True if a conference is recent enough that the site may still be publishing it.
+
+    Conferences are held the first weekend of April and October, and the Church posts
+    talks and audio over the following days. Any conference in the current month or later
+    can therefore be legitimately incomplete; an older one with missing talks points at a
+    scrape failure instead.
+
+    Args:
+        year: Conference year.
+        month: Conference month (4 or 10).
+        today: Reference date; defaults to today's date.
+
+    Returns:
+        True if the conference month is the current month or in the future.
+    """
+    ref = today or date.today()
+    return (year, month) >= (ref.year, ref.month)
 
 
 @dataclass
@@ -53,6 +77,41 @@ class Talk:
     talk_index: int = 0       # 1-indexed across the whole conference
     duration_seconds: float = 0.0
 
+    def missing_fields(self) -> list[str]:
+        """Return the names of required fields this talk lacks.
+
+        A talk needs a title, a speaker, and an allowlisted MP3 URL to be usable. This is
+        the single rule the scraper and CLI both use to decide whether a talk is complete.
+
+        Returns:
+            Missing field names in a stable order; empty when nothing is missing.
+        """
+        missing: list[str] = []
+        if not self.title:
+            missing.append("title")
+        if not self.speaker:
+            missing.append("speaker")
+        if not self.mp3_url or not validate_url(self.mp3_url):
+            missing.append("mp3_url")
+        return missing
+
+    @property
+    def is_session_landing(self) -> bool:
+        """True if this entry is a session landing page standing in for unpublished talks.
+
+        Before a session's talks are posted, the conference listing links to the session's
+        own page (e.g. ``.../2026/10/saturday-morning-session``) where its talks will go.
+        Both the slug and the title must look like a session so that a real talk whose
+        slug happens to end in "-session" is not misclassified.
+        """
+        slug = self.talk_url.rstrip("/").rsplit("/", 1)[-1].lower()
+        return slug.endswith("-session") and self.title.strip().lower().endswith("session")
+
+    @property
+    def is_complete(self) -> bool:
+        """True if this is a real talk with every required field present."""
+        return not self.is_session_landing and not self.missing_fields()
+
 
 @dataclass
 class Session:
@@ -93,3 +152,28 @@ class Conference:
     def talks(self) -> list[Talk]:
         """All talks across all sessions, in order."""
         return [talk for session in self.sessions for talk in session.talks]
+
+    @property
+    def incomplete_talks(self) -> list[Talk]:
+        """Listing entries that are not usable talks yet, in order.
+
+        Includes talks missing required fields and session landing pages whose talks
+        have not been posted. Empty for a fully published conference.
+        """
+        return [talk for talk in self.talks if not talk.is_complete]
+
+    def without_incomplete_talks(self) -> Conference:
+        """Return a copy containing only complete talks, dropping sessions left empty.
+
+        Talks keep their original ``talk_index`` so audio filenames stay the same when
+        the missing talks are published and the conference is rebuilt in full.
+
+        Returns:
+            A new Conference; this instance is not modified.
+        """
+        sessions: list[Session] = []
+        for session in self.sessions:
+            talks = [talk for talk in session.talks if talk.is_complete]
+            if talks:
+                sessions.append(dataclasses.replace(session, talks=talks))
+        return dataclasses.replace(self, sessions=sessions)

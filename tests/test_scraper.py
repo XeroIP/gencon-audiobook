@@ -15,12 +15,14 @@ import pytest
 import responses as responses_lib
 
 from gencon_audiobook.scraper import (
+    ConferenceNotPublishedError,
     ScraperError,
     _check_robots,
     _find_cover_image,
     _get_robots,
     parse_conference_archive,
     parse_conference_listing,
+    _sessions_from_html,
     parse_talk_page,
     reset_robots_cache,
     scrape_conference,
@@ -683,3 +685,126 @@ def test_scrape_conference_skips_talk_on_fetch_error() -> None:
     assert bad_talk.mp3_url is None, "The talk whose page failed to fetch must be skipped"
     good_talks = [t for t in all_talks if t.talk_url != bad_url]
     assert all(t.mp3_url for t in good_talks), "All other talks must still be populated"
+
+
+# ---------------------------------------------------------------------------
+# Unpublished and partially published conferences (#191)
+# ---------------------------------------------------------------------------
+
+_UPCOMING_URL = "https://www.churchofjesuschrist.org/study/general-conference/2026/10"
+# Padding keeps synthetic listings above _fetch's "suspiciously short response" threshold.
+_PADDING = "<!-- " + "x" * 1200 + " -->"
+
+
+def _listing_html(*session_blocks: str) -> str:
+    return f"<html><body>{_PADDING}<ul>{''.join(session_blocks)}</ul></body></html>"
+
+
+def _session_block(name: str, slug: str, entries: list[tuple[str, str, str]]) -> str:
+    """Build one session <li>; entries are (slug, title, speaker) tuples."""
+    items = "".join(
+        f'<li><a href="/study/general-conference/2026/10/{entry_slug}">'
+        f"<div><p>{title}</p><p>{speaker}</p></div></a></li>"
+        for entry_slug, title, speaker in entries
+    )
+    return (
+        f'<li><a href="/study/general-conference/2026/10/{slug}">{name}</a>'
+        f"<ul>{items}</ul></li>"
+    )
+
+
+def test_parse_conference_listing_unpublished_raises_not_published():
+    """The pre-conference page (captured 2026-09-27) lists only session placeholders."""
+    html = _load("conference_listing_unpublished.html")
+    with pytest.raises(ConferenceNotPublishedError):
+        parse_conference_listing(html)
+
+
+def test_parse_conference_listing_unpublished_logs_no_structure_warning(caplog):
+    html = _load("conference_listing_unpublished.html")
+    with caplog.at_level("WARNING", logger="gencon_audiobook.scraper"):
+        with pytest.raises(ConferenceNotPublishedError):
+            parse_conference_listing(html)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == [], f"An unpublished conference must not log site-change warnings: {warnings}"
+
+
+def test_sessions_from_html_dedupes_repeated_urls():
+    link = (
+        '<a href="/study/general-conference/2026/10/saturday-morning-session">'
+        "<div><p>Saturday Morning Session</p></div></a>"
+    )
+    html = f"<html><body>{link}{link}</body></html>"
+    sessions = _sessions_from_html(html)
+    urls = [t.talk_url for s in sessions for t in s.talks]
+    assert len(urls) == 1, f"Each URL must appear once, got {urls}"
+
+
+@responses_lib.activate
+def test_scrape_conference_skips_fetching_session_placeholders() -> None:
+    """A session whose talks are not posted yet is reported, not fetched as a talk."""
+    _add_robots_response()
+    listing = _listing_html(
+        _session_block(
+            "Saturday Morning Session",
+            "saturday-morning-session",
+            [("11oaks", "Talk One", "President Oaks")],
+        ),
+        _session_block(
+            "Sunday Morning Session",
+            "sunday-morning-session",
+            [("sunday-morning-session", "Sunday Morning Session", "")],
+        ),
+    )
+    responses_lib.add(responses_lib.GET, _UPCOMING_URL, status=200, body=listing)
+    responses_lib.add(
+        responses_lib.GET,
+        f"{_UPCOMING_URL}/11oaks",
+        status=200,
+        body=_load("talk_page.html"),
+    )
+
+    conference = scrape_conference(_UPCOMING_URL)
+
+    fetched = [call.request.url for call in responses_lib.calls]
+    assert not any("sunday-morning-session" in url for url in fetched), (
+        f"Session placeholder page must not be fetched, fetched: {fetched}"
+    )
+    assert [t.title for t in conference.incomplete_talks] == ["Sunday Morning Session"], (
+        f"Placeholder must be reported incomplete, got {conference.incomplete_talks}"
+    )
+
+
+def _register_listing_with_unpublished_talks() -> None:
+    """Mock a listing of two talks whose pages both 404 (listed but not posted)."""
+    _add_robots_response()
+    listing = _listing_html(
+        _session_block(
+            "Saturday Morning Session",
+            "saturday-morning-session",
+            [("11oaks", "Talk One", "President Oaks"), ("12eyring", "Talk Two", "President Eyring")],
+        ),
+    )
+    responses_lib.add(responses_lib.GET, _UPCOMING_URL, status=200, body=listing)
+    responses_lib.add(responses_lib.GET, f"{_UPCOMING_URL}/11oaks", status=404)
+    responses_lib.add(responses_lib.GET, f"{_UPCOMING_URL}/12eyring", status=404)
+
+
+@responses_lib.activate
+def test_scrape_conference_no_usable_talks_while_publishing_raises_not_published() -> None:
+    _register_listing_with_unpublished_talks()
+    with patch("gencon_audiobook.scraper.conference_may_still_be_publishing", return_value=True):
+        with pytest.raises(ConferenceNotPublishedError):
+            scrape_conference(_UPCOMING_URL)
+
+
+@responses_lib.activate
+def test_scrape_conference_no_usable_talks_on_old_conference_raises_site_error() -> None:
+    _register_listing_with_unpublished_talks()
+    with patch("gencon_audiobook.scraper.conference_may_still_be_publishing", return_value=False):
+        with pytest.raises(ScraperError) as exc_info:
+            scrape_conference(_UPCOMING_URL)
+    assert not isinstance(exc_info.value, ConferenceNotPublishedError), (
+        "An old conference with no usable talks points at a site change, not publication"
+    )
+

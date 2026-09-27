@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 import click
 from rich.logging import RichHandler
@@ -29,15 +29,21 @@ from .downloader import (
 )
 from .epub_builder import EpubError, build_epub
 from .ffmpeg_manager import FfmpegNotFoundError, ensure_ffmpeg, ensure_ffprobe
-from .models import Conference, Talk
+from .models import Conference, Talk, conference_may_still_be_publishing
 from .progress import shared_console
-from .scraper import ScraperError, fetch_available_conferences, scrape_conference
+from .scraper import (
+    ConferenceNotPublishedError,
+    ScraperError,
+    fetch_available_conferences,
+    scrape_conference,
+)
 
 logger = logging.getLogger(__name__)
 
 _LOG_FILENAME = "gencon-audiobook.log"
 _MIN_PYTHON = (3, 10)
 _DISK_WARN_MB = 500
+_MISSING_TALKS_SHOWN = 10  # keeps the incomplete-conference error readable
 
 # Use the shared console from progress.py so RichHandler and all Progress bars
 # write through the same Console — Rich then interleaves log messages correctly
@@ -164,7 +170,9 @@ def _check_disk_space(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _select_conference(conference_filter: str | None) -> tuple[str, str]:
+def _select_conference(
+    conference_filter: str | None,
+) -> tuple[str, str, tuple[str, str] | None]:
     """Resolve the conference to download.
 
     If conference_filter is given as YYYY-MM, construct the URL directly — no
@@ -174,7 +182,10 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         conference_filter: Conference date as YYYY-MM (e.g., '2024-04'), or None.
 
     Returns:
-        (title, url) of the selected conference.
+        (title, url, fallback) of the selected conference. ``fallback`` is the
+        (title, url) of the next most recent conference when defaulting to the most
+        recent one, for use if that one has not been published yet; None when the
+        user named a conference explicitly or no earlier conference is listed.
 
     Raises:
         SystemExit: if the format is invalid or the listing cannot be fetched.
@@ -192,7 +203,7 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         title = f"{calendar.month_name[month]} {year} General Conference"
         url = f"{_CONF_BASE}/{year}/{month:02d}"
         console.print(f"Selected: {title}")
-        return title, url
+        return title, url, None
 
     # No filter — fetch listing, default to most recent.
     try:
@@ -217,7 +228,126 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
         sys.exit(1)
 
     console.print(f"Found {len(refs)} conferences. Using: {refs[0].title}")
-    return refs[0].title, refs[0].url
+    fallback = (refs[1].title, refs[1].url) if len(refs) > 1 else None
+    return refs[0].title, refs[0].url, fallback
+
+
+def _load_or_scrape_conference(
+    conf_title: str,
+    conf_url: str,
+    output_dir: Path,
+    force_scrape: bool,
+    conference_filter: str | None,
+) -> tuple[Conference, float | None]:
+    """Load a conference from its metadata cache, or scrape it from the website.
+
+    A cached conference that is incomplete is ignored: older versions cached whatever
+    they scraped, so a cache written while the conference was still being published
+    would otherwise hide talks posted since.
+
+    Args:
+        conf_title: Conference title; names the output directory holding the cache.
+        conf_url: Conference listing URL; must match the URL stored in the cache.
+        output_dir: Root output directory.
+        force_scrape: Skip the cache and always scrape.
+        conference_filter: The user's --conference value, or None; used to word errors.
+
+    Returns:
+        (conference, scrape_seconds). ``scrape_seconds`` is None when the conference
+        came from the cache.
+
+    Raises:
+        ConferenceNotPublishedError: if the conference has no published talks yet.
+        SystemExit: on any other scraper failure.
+    """
+    conf_output_dir = output_dir / conf_title
+    if not force_scrape:
+        cached = load_cache(conf_output_dir, expected_url=conf_url)
+        if cached is not None and cached.incomplete_talks:
+            console.print(
+                f"Cached conference data ({conf_output_dir / CACHE_FILENAME}) is missing "
+                f"{len(cached.incomplete_talks)} talk(s); checking the website for updates."
+            )
+        elif cached is not None:
+            console.print(
+                f"Loaded {len(cached.talks)} talks from cache "
+                f"({conf_output_dir / CACHE_FILENAME}). "
+                "Use --force-scrape to refresh."
+            )
+            return cached, None
+
+    # Scrape conference details — progress bar printed inside scrape_conference()
+    t0 = time.monotonic()
+    try:
+        conf_obj = scrape_conference(conf_url)
+    except ConferenceNotPublishedError:
+        raise
+    except ScraperError as exc:
+        if conference_filter and "not found" in str(exc).lower():
+            click.echo(
+                f"Error: Conference {conference_filter} was not found at churchofjesuschrist.org.\n"
+                "Check the conference code or run without --conference to choose from "
+                "available conferences.",
+                err=True,
+            )
+            sys.exit(1)
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    return conf_obj, time.monotonic() - t0
+
+
+def _exit_not_published(conf_title: str) -> NoReturn:
+    """Tell the user a conference has no published talks yet, then exit 1."""
+    click.echo(
+        f"Error: {conf_title} has not been published yet.\n"
+        "The Church posts talks on churchofjesuschrist.org in the days after the "
+        "conference. Try again later, or choose an earlier conference with "
+        "--conference YYYY-MM.",
+        err=True,
+    )
+    sys.exit(1)
+
+
+def _exit_incomplete(conference: Conference) -> NoReturn:
+    """Explain which talks are missing from an incomplete conference, then exit 1.
+
+    Nothing has been written to disk at this point, so re-running later starts clean.
+    """
+    missing = conference.incomplete_talks
+    available = len(conference.talks) - len(missing)
+    lines = [
+        f"Error: {conference.title} is incomplete: {len(missing)} of "
+        f"{len(conference.talks)} talks are missing audio or other required data.",
+        "Missing:",
+    ]
+    for talk in missing[:_MISSING_TALKS_SHOWN]:
+        lines.append(f"  - {_describe_talk(talk)}")
+    if len(missing) > _MISSING_TALKS_SHOWN:
+        lines.append(f"  ... and {len(missing) - _MISSING_TALKS_SHOWN} more")
+    if conference_may_still_be_publishing(conference.year, conference.month):
+        lines.append(
+            "The Church is probably still publishing this conference; talks and audio "
+            "are usually all posted within a few days after it ends."
+        )
+    else:
+        lines.append(
+            "This is usually a temporary network or website error for those talks."
+        )
+    lines.append(
+        "Run the same command again later, or add --allow-partial to build from the "
+        f"{available} talk(s) available now."
+    )
+    click.echo("\n".join(lines), err=True)
+    sys.exit(1)
+
+
+def _describe_talk(talk: Talk) -> str:
+    """Return a one-line label for a talk in user-facing lists."""
+    if talk.is_session_landing:
+        return f"{talk.title} (talks not posted yet)"
+    if talk.speaker:
+        return f"{talk.title} ({talk.speaker})"
+    return talk.title
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +421,12 @@ def _select_conference(conference_filter: str | None) -> tuple[str, str]:
     default=False,
     help="Use higher-quality audio extracted from 360p video when it beats the MP3 source.",
 )
+@click.option(
+    "--allow-partial",
+    is_flag=True,
+    default=False,
+    help="Build from the talks available now when a conference is still being published.",
+)
 @click.version_option(version=__version__, prog_name="gencon-audiobook")
 def main(
     output: str,
@@ -304,6 +440,7 @@ def main(
     sample_rate: int | None,
     epub_paragraph_numbers: bool,
     prefer_video_audio: bool,
+    allow_partial: bool,
 ) -> None:
     """Download General Conference talks as a chaptered m4b audiobook and epub companion."""
     _check_python_version()
@@ -328,6 +465,7 @@ def main(
             sample_rate=sample_rate,
             epub_paragraph_numbers=epub_paragraph_numbers,
             prefer_video_audio=prefer_video_audio,
+            allow_partial=allow_partial,
         )
     except KeyboardInterrupt:
         console.print(
@@ -361,6 +499,7 @@ def _print_completion_report(
     failed_talks: list[Talk],
     stats: BuildStats | None,
     phase_times: dict[str, float],
+    partial_missing: int = 0,
 ) -> None:
     """Print a structured completion report to the console.
 
@@ -372,10 +511,13 @@ def _print_completion_report(
         failed_talks: Talks that failed to download.
         stats: BuildStats from build_m4b, or None if audiobook was skipped/cached.
         phase_times: Elapsed seconds per phase label.
+        partial_missing: Number of talks left out by --allow-partial; 0 for a full build.
     """
     console.print("")
     console.print("--- Completion Report ---")
     console.print(f"  Conference:    {conference.title}")
+    if partial_missing:
+        console.print(f"  PARTIAL:       {partial_missing} talk(s) missing and not included")
     console.print(f"  Sessions:      {len(conference.sessions)}")
     for session in conference.sessions:
         console.print(f"    - {session.name}")
@@ -413,6 +555,13 @@ def _print_completion_report(
         )
         for talk in failed_talks:
             console.print(f"    - {talk.title} ({talk.speaker})")
+
+    if partial_missing:
+        console.print(
+            "\n  This build is partial. Once every talk is published, rebuild the full "
+            "conference with the same options plus --overwrite (without --allow-partial), e.g.:\n"
+            f"    gencon-audiobook --conference {conference.year}-{conference.month:02d} --overwrite"
+        )
 
     console.print(f"\n  Output: {conf_output_dir}")
     console.print(f"  Log:    {conf_output_dir / _LOG_FILENAME}")
@@ -536,48 +685,55 @@ def _run(
     sample_rate: int | None,
     epub_paragraph_numbers: bool = False,
     prefer_video_audio: bool = False,
+    allow_partial: bool = False,
 ) -> None:
     """Inner implementation of main() — separated so KeyboardInterrupt is handled cleanly."""
     output_dir = Path(output).expanduser().resolve()
     phase_times: dict[str, float] = {}
 
-    conf_title, conf_url = _select_conference(conference)
+    conf_title, conf_url, fallback = _select_conference(conference)
+    try:
+        conf_obj, scrape_seconds = _load_or_scrape_conference(
+            conf_title, conf_url, output_dir, force_scrape, conference
+        )
+    except ConferenceNotPublishedError:
+        # The site lists the next conference before it is held. When the user did not
+        # ask for it by name, the previous conference is the most recent one available.
+        if fallback is None:
+            _exit_not_published(conf_title)
+        console.print(f"{conf_title} has not been published yet. Using {fallback[0]} instead.")
+        conf_title, conf_url = fallback
+        try:
+            conf_obj, scrape_seconds = _load_or_scrape_conference(
+                conf_title, conf_url, output_dir, force_scrape, conference
+            )
+        except ConferenceNotPublishedError:
+            _exit_not_published(conf_title)
+    if scrape_seconds is not None:
+        phase_times["scrape"] = scrape_seconds
 
-    # Resolve the output directory early — conf_title matches conf_obj.title, so we
-    # can check the cache before scraping rather than after.
+    # conf_title matches conf_obj.title, so output paths can be resolved from it.
     conf_output_dir = output_dir / conf_title
     m4b_path = conf_output_dir / f"{conf_title}.m4b"
     epub_path = conf_output_dir / f"{conf_title}.epub"
 
-    # Load from cache if available and --force-scrape not set.
-    conf_obj = None
-    if not force_scrape:
-        conf_obj = load_cache(conf_output_dir, expected_url=conf_url)
-        if conf_obj is not None:
-            console.print(
-                f"Loaded {len(conf_obj.talks)} talks from cache "
-                f"({conf_output_dir / CACHE_FILENAME}). "
-                "Use --force-scrape to refresh."
-            )
+    # A partial build written under the final filenames would block the complete build
+    # on later runs, so incomplete conferences are refused unless explicitly requested.
+    # Nothing has been written to disk yet, so a refused run leaves no trace.
+    partial_missing = len(conf_obj.incomplete_talks)
+    if partial_missing:
+        if not allow_partial:
+            _exit_incomplete(conf_obj)
+        conf_obj = conf_obj.without_incomplete_talks()
+        console.print(
+            f"--allow-partial: building from {len(conf_obj.talks)} available talk(s); "
+            f"{partial_missing} missing talk(s) are left out."
+        )
 
-    if conf_obj is None:
-        # Scrape conference details — progress bar printed inside scrape_conference()
-        t0 = time.monotonic()
-        try:
-            conf_obj = scrape_conference(conf_url)
-        except ScraperError as exc:
-            if conference and "not found" in str(exc).lower():
-                click.echo(
-                    f"Error: Conference {conference} was not found at churchofjesuschrist.org.\n"
-                    "Check the conference code or run without --conference to choose from "
-                    "available conferences.",
-                    err=True,
-                )
-                sys.exit(1)
-            click.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
-        phase_times["scrape"] = time.monotonic() - t0
-        conf_output_dir.mkdir(parents=True, exist_ok=True)
+    conf_output_dir.mkdir(parents=True, exist_ok=True)
+    # Only a complete conference is cached, so later runs re-check the website
+    # for talks that were missing this time.
+    if scrape_seconds is not None and not partial_missing:
         save_cache(conf_obj, conf_output_dir)
         logger.info("Saved conference cache: %s", conf_output_dir / CACHE_FILENAME)
 
@@ -727,4 +883,5 @@ def _run(
         failed_talks=failed_talks,
         stats=build_stats,
         phase_times=phase_times,
+        partial_missing=partial_missing,
     )

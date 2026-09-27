@@ -16,7 +16,13 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from .models import Conference, InlineImage, Session, Talk
+from .models import (
+    Conference,
+    InlineImage,
+    Session,
+    Talk,
+    conference_may_still_be_publishing,
+)
 from .progress import shared_console as console
 from .progress import standard_progress
 from .utils import USER_AGENT, get_thread_session, make_session, validate_url
@@ -154,6 +160,15 @@ class ConferenceRef:
 
 class ScraperError(Exception):
     """User-facing scraper failure with an actionable message."""
+
+
+class ConferenceNotPublishedError(ScraperError):
+    """The conference page exists but none of its talks have been published yet.
+
+    The Church site lists an upcoming conference before it is held, with only session
+    placeholders, and posts talks over the days after it ends. Callers can fall back to
+    an earlier conference instead of treating this as a site change.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +539,7 @@ def parse_conference_listing(html: str) -> list[Session]:
         List of Session objects with Talk stubs (title, speaker, talk_url populated).
 
     Raises:
+        ConferenceNotPublishedError: if the page lists only session placeholders.
         ScraperError: if no talks can be parsed.
     """
     sessions: list[Session] = []
@@ -546,6 +562,12 @@ def parse_conference_listing(html: str) -> list[Session]:
         raise ScraperError(
             "Could not find any talks on the conference page. The website may have changed. "
             "Please open a GitHub issue at github.com/XeroIP/gencon-audiobook."
+        )
+
+    if all(talk.is_session_landing for session in sessions for talk in session.talks):
+        raise ConferenceNotPublishedError(
+            "The conference page lists only session placeholders; "
+            "no talks have been published yet."
         )
 
     return sessions
@@ -693,6 +715,9 @@ def _sessions_from_html(html: str) -> list[Session]:
 
     sessions: list[Session] = []
     session_number = 0
+    # The page can link the same URL more than once (the unpublished-conference page
+    # lists every session placeholder twice); a talk belongs to exactly one session.
+    seen_urls: set[str] = set()
 
     if session_lis:
         for li in session_lis:
@@ -724,8 +749,9 @@ def _sessions_from_html(html: str) -> list[Session]:
                     continue
                 title = _extract_talk_title(talk_a)
                 speaker = _extract_talk_speaker(talk_a)
-                if title:
-                    talk_url = urljoin(_BASE_URL, talk_a["href"].split("?")[0])
+                talk_url = urljoin(_BASE_URL, talk_a["href"].split("?")[0])
+                if title and talk_url not in seen_urls:
+                    seen_urls.add(talk_url)
                     talks.append(Talk(title=title, speaker=speaker, talk_url=talk_url))
 
             if talks:
@@ -734,15 +760,24 @@ def _sessions_from_html(html: str) -> list[Session]:
 
     # Fallback: no session structure detected — put all talks in one session
     if not sessions:
-        logger.warning("No session structure detected; grouping all talks under one session")
         all_talks: list[Talk] = []
         for a in conf_links:
             title = _extract_talk_title(a)
             speaker = _extract_talk_speaker(a)
-            if title:
-                talk_url = urljoin(_BASE_URL, a["href"].split("?")[0])
+            talk_url = urljoin(_BASE_URL, a["href"].split("?")[0])
+            if title and talk_url not in seen_urls:
+                seen_urls.add(talk_url)
                 all_talks.append(Talk(title=title, speaker=speaker, talk_url=talk_url))
         if all_talks:
+            # A page of nothing but session placeholders is an unpublished conference,
+            # which parse_conference_listing reports on its own; the structure warning
+            # would only mislead users into thinking the site changed.
+            if all(talk.is_session_landing for talk in all_talks):
+                logger.debug("Listing contains only session placeholders")
+            else:
+                logger.warning(
+                    "No session structure detected; grouping all talks under one session"
+                )
             sessions.append(Session(name="General Conference", number=1, talks=all_talks))
 
     return sessions
@@ -985,15 +1020,7 @@ def _scrape_one_talk(talk: Talk) -> Talk | None:
         talk.speaker_image_url = data["speaker_image_url"]
         talk.inline_images = data["inline_images"]
 
-        # Validate required fields
-        missing = []
-        if not talk.title:
-            missing.append("title")
-        if not talk.speaker:
-            missing.append("speaker")
-        if not talk.mp3_url or not validate_url(talk.mp3_url):
-            missing.append("mp3_url")
-
+        missing = talk.missing_fields()
         if missing:
             logger.warning(
                 "Talk at %s missing required fields: %s — skipping",
@@ -1013,15 +1040,19 @@ def scrape_conference(conference_url: str) -> Conference:
 
     Populates all Talk fields including mp3_url, transcript_html,
     speaker_image_url, session_number, talk_number, and talk_index.
-    Talks that fail individually are logged and skipped.
+    Talks that fail individually are logged and left in their session with the
+    missing fields empty, so ``Conference.incomplete_talks`` can report them;
+    session placeholders are kept the same way but their pages are not fetched.
 
     Args:
         conference_url: URL of the conference listing page.
 
     Returns:
-        Fully populated Conference object.
+        Conference object; check ``incomplete_talks`` before building output.
 
     Raises:
+        ConferenceNotPublishedError: if the page lists only session placeholders, or
+            no talk is usable yet on a conference the site may still be publishing.
         ScraperError: if the conference page fails or zero valid talks are found.
     """
     http = make_session()
@@ -1052,20 +1083,26 @@ def scrape_conference(conference_url: str) -> Conference:
             talk_index += 1
 
     # Fetch each talk page. Talks are independent, so pages are scraped
-    # concurrently — each worker uses its own thread-local session.
+    # concurrently — each worker uses its own thread-local session. Session
+    # placeholders have no talk content, so fetching them only produces
+    # misleading selector warnings.
     all_talks = [t for s in sessions for t in s.talks]
+    placeholders = [t for t in all_talks if t.is_session_landing]
+    talks_to_fetch = [t for t in all_talks if not t.is_session_landing]
     valid_count = 0
-    skipped: list[Talk] = []
+    skipped: list[Talk] = list(placeholders)
+    for placeholder in placeholders:
+        logger.info("Session not published yet: %s", placeholder.title)
 
     console.print(f"Scraping: {title}")
     scrape_progress = standard_progress()
     with scrape_progress:
-        task = scrape_progress.add_task("Scraping talks", total=len(all_talks))
-        if all_talks:
-            workers = min(_SCRAPE_WORKERS, len(all_talks))
+        task = scrape_progress.add_task("Scraping talks", total=len(talks_to_fetch))
+        if talks_to_fetch:
+            workers = min(_SCRAPE_WORKERS, len(talks_to_fetch))
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
-                    executor.submit(_scrape_one_talk, talk): talk for talk in all_talks
+                    executor.submit(_scrape_one_talk, talk): talk for talk in talks_to_fetch
                 }
                 for future in as_completed(futures):
                     skipped_talk = future.result()
@@ -1079,6 +1116,13 @@ def scrape_conference(conference_url: str) -> Conference:
         logger.warning("%d talk(s) skipped due to missing fields or errors", len(skipped))
 
     if valid_count == 0:
+        # During the days after a conference, talk pages can be listed before any
+        # audio is posted. Blaming a site change then would send users to file bugs.
+        if conference_may_still_be_publishing(year, month):
+            raise ConferenceNotPublishedError(
+                f"None of the {len(all_talks)} listed talks are fully published yet "
+                "(audio or speaker missing); the conference is still being published."
+            )
         raise ScraperError(
             "No valid talks found. The website structure may have changed. "
             "Please open a GitHub issue at github.com/XeroIP/gencon-audiobook."
