@@ -19,8 +19,8 @@ flowchart TD
     SCRAPER --> CACHE
 
     subgraph CACHE["cache.py"]
-        C1["Save Conference to conference.json\n(after first scrape)"]
-        C2["Load from conference.json\n(subsequent runs — skip scraping)\n--force-scrape bypasses this"]
+        C1["Save Conference to conference.json\n(after first complete scrape)"]
+        C2["Load from conference.json\n(subsequent runs — skip scraping;\nincomplete cache is re-scraped)\n--force-scrape bypasses this"]
     end
 
     CACHE --> MODELS

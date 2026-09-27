@@ -65,6 +65,9 @@ gencon-audiobook --verbose
 
 # Add paragraph numbers to EPUB transcripts (useful for study groups and citations)
 gencon-audiobook --epub-paragraph-numbers
+
+# Build from the talks posted so far while a conference is still being published
+gencon-audiobook --conference 2026-10 --allow-partial
 ```
 
 For the full options reference, file size guide, and platform compatibility notes, see the [User Guide](https://github.com/XeroIP/gencon-audiobook/wiki/User-Guide).
@@ -87,6 +90,13 @@ For the full options reference, file size guide, and platform compatibility note
 ```
 
 Running the tool a second time skips files that already exist and loads conference metadata from `conference.json` instead of re-scraping the Church website. Use `--overwrite` to rebuild output files. Use `--force-scrape` to bypass the metadata cache and fetch fresh data from the Church website.
+
+### Newly held conferences
+
+The Church website lists each conference before it is held and posts talks and audio over the days after it ends.
+
+- Before any talks are posted, running with no `--conference` uses the previous conference instead; asking for the new one by name (`--conference 2026-10`) reports that it has not been published yet.
+- While some talks are still missing, the tool lists them and stops without downloading or writing anything. Run the same command again once they are posted. To build from the talks available now, add `--allow-partial`; that build is never cached, and `--overwrite` rebuilds the complete conference later.
 
 For older conferences, the tool checks whether the 360p video has better audio than the MP3 source. If it does, the default run warns you before downloading. Re-run with `--prefer-video-audio` to extract the higher-quality AAC track from video files. This takes significantly longer and requires much more disk space, so the tool shows estimated download and audio-cache sizes before starting.
 

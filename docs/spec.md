@@ -13,7 +13,7 @@ and speaker photos.
 ```bash
 pip install gencon-audiobook
 
-gencon-audiobook                          # List available conferences, default to most recent
+gencon-audiobook                          # List available conferences, default to most recent published
 gencon-audiobook --conference 2024-04       # Select a specific conference
 gencon-audiobook --audiobook-only         # Produce only the m4b
 gencon-audiobook --epub-only              # Produce only the epub
@@ -24,6 +24,7 @@ gencon-audiobook --force-scrape           # Bypass conference.json cache, re-scr
 gencon-audiobook --bitrate 32k --sample-rate 22050
 gencon-audiobook --epub-paragraph-numbers # Add paragraph numbers to EPUB transcripts
 gencon-audiobook --prefer-video-audio     # Extract better AAC audio from video when MP3 is worse
+gencon-audiobook --allow-partial          # Build a conference that is still being published from the talks posted so far
 ```
 
 ## Output Structure
@@ -90,7 +91,7 @@ churchofjesuschrist.org
         |
         v
   cache.py  (conference.json)
-  (save after first scrape; load on subsequent runs to skip scraping)
+  (save after first complete scrape; load on subsequent runs to skip scraping)
   (--force-scrape bypasses cache)
         |
         v

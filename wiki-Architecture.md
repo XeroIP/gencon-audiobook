@@ -18,8 +18,9 @@ churchofjesuschrist.org
         |
         v
   [ cache.py ]
-  Save Conference to conference.json after first scrape.
-  Load from conference.json on subsequent runs (skips scraping).
+  Save Conference to conference.json after the first complete scrape.
+  Load from conference.json on subsequent runs (skips scraping);
+  an incomplete cached conference is ignored and re-scraped.
   --force-scrape bypasses the cache.
         |
         v
@@ -191,7 +192,7 @@ Public API: `save_conference(conference, path)`, `load_conference(path) -> Confe
 
 The JSON file uses the same structure as the `Conference` dataclass. A `cache_version` field allows future format changes to invalidate stale caches automatically. `load_conference` returns `None` (cache miss) if the file is absent, unreadable, or from an incompatible version.
 
-Used by `cli.py`: after scraping, the Conference is saved. On the next run, `cli.py` loads from cache and skips scraping entirely. `--force-scrape` bypasses this and scrapes fresh data regardless.
+Used by `cli.py`: after scraping, the Conference is saved only if it is complete (`Conference.incomplete_talks` is empty). On the next run, `cli.py` loads from cache and skips scraping entirely, unless the cached conference is incomplete (written by an older version while the conference was still being published), in which case it re-scrapes. `--force-scrape` bypasses the cache and scrapes fresh data regardless.
 
 Depends on: `models.py`
 

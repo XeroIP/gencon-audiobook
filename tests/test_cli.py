@@ -10,10 +10,11 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from gencon_audiobook.audio import AudioError
+from gencon_audiobook.cache import CACHE_FILENAME, load_cache, save_cache
 from gencon_audiobook.cli import main, _LOG_FILENAME
 from gencon_audiobook.downloader import AudioProbe, DownloadError, DownloadResult
 from gencon_audiobook.models import Conference, Session, Talk
-from gencon_audiobook.scraper import ConferenceRef, ScraperError
+from gencon_audiobook.scraper import ConferenceNotPublishedError, ConferenceRef, ScraperError
 
 
 # ---------------------------------------------------------------------------
@@ -800,3 +801,252 @@ def test_prefer_video_audio_does_not_downgrade_better_mp3(tmp_path: Path) -> Non
     assert "MP3 source is already equal" in result.output
     assert "better for this conference" in result.output
     assert mock_download.call_args.kwargs["prefer_video_audio"] is False
+
+
+# ---------------------------------------------------------------------------
+# Unpublished and partially published conferences (#191)
+# ---------------------------------------------------------------------------
+
+_OCT_2026_TITLE = "October 2026 General Conference"
+_OCT_2026_URL = "https://www.churchofjesuschrist.org/study/general-conference/2026/10"
+
+
+def _flat(text: str) -> str:
+    """Collapse whitespace so assertions survive Rich's terminal line wrapping."""
+    return " ".join(text.split())
+
+
+def _make_october_conference(*, complete: bool) -> Conference:
+    """October 2026 conference; when incomplete, its second talk has no audio yet."""
+    conference = _make_conference(_OCT_2026_TITLE)
+    conference.year, conference.month = 2026, 10
+    conference.conference_url = _OCT_2026_URL
+    conference.sessions[0].talks.append(
+        Talk(
+            title="Closing Remarks",
+            speaker="President Oaks",
+            talk_url=f"{_OCT_2026_URL}/57oaks",
+            mp3_url="https://assets.churchofjesuschrist.org/closing.mp3" if complete else None,
+            talk_index=2,
+        )
+    )
+    return conference
+
+
+def test_default_falls_back_when_newest_conference_unpublished(tmp_path: Path) -> None:
+    refs = [_make_ref(_OCT_2026_TITLE, 2026, 10), _make_ref()]
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            side_effect=[ConferenceNotPublishedError("placeholders only"), _make_conference()],
+        ) as mock_scrape,
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        result = CliRunner().invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "October 2026 General Conference has not been published yet. "
+        "Using April 2024 General Conference instead."
+    ) in _flat(result.output), result.output
+    assert mock_scrape.call_args_list[1].args[0] == refs[1].url, (
+        f"Expected fallback scrape of {refs[1].url}, got {mock_scrape.call_args_list}"
+    )
+    mock_epub.assert_called_once()
+
+
+def test_default_unpublished_without_earlier_conference_exits_nonzero(tmp_path: Path) -> None:
+    refs = [_make_ref(_OCT_2026_TITLE, 2026, 10)]
+
+    with (
+        patch("gencon_audiobook.cli.fetch_available_conferences", return_value=refs),
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            side_effect=ConferenceNotPublishedError("placeholders only"),
+        ),
+    ):
+        result = CliRunner().invoke(main, ["--output", str(tmp_path), "--epub-only"])
+
+    assert result.exit_code == 1, result.output
+    assert "has not been published yet" in _flat(result.output), result.output
+
+
+def test_explicit_unpublished_conference_exits_with_message(tmp_path: Path) -> None:
+    with patch(
+        "gencon_audiobook.cli.scrape_conference",
+        side_effect=ConferenceNotPublishedError("placeholders only"),
+    ):
+        result = CliRunner().invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"]
+        )
+
+    flat = _flat(result.output)
+    assert result.exit_code == 1, result.output
+    assert "October 2026 General Conference has not been published yet" in flat, result.output
+    assert "GitHub issue" not in flat, "An unpublished conference is not a bug to report"
+
+
+def test_explicit_unpublished_conference_writes_nothing(tmp_path: Path) -> None:
+    with patch(
+        "gencon_audiobook.cli.scrape_conference",
+        side_effect=ConferenceNotPublishedError("placeholders only"),
+    ):
+        CliRunner().invoke(main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"])
+
+    assert list(tmp_path.iterdir()) == [], f"Nothing should be written, found {list(tmp_path.iterdir())}"
+
+
+def test_incomplete_conference_refuses_without_allow_partial(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=False),
+        ),
+        patch("gencon_audiobook.cli.download_conference") as mock_download,
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        result = CliRunner().invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"]
+        )
+
+    flat = _flat(result.output)
+    assert result.exit_code == 1, result.output
+    assert "is incomplete: 1 of 2 talks" in flat, result.output
+    assert "Closing Remarks (President Oaks)" in flat, result.output
+    assert "--allow-partial" in flat, result.output
+    mock_download.assert_not_called()
+    mock_epub.assert_not_called()
+
+
+def test_incomplete_conference_refusal_writes_nothing(tmp_path: Path) -> None:
+    with patch(
+        "gencon_audiobook.cli.scrape_conference",
+        return_value=_make_october_conference(complete=False),
+    ):
+        CliRunner().invoke(main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"])
+
+    assert list(tmp_path.iterdir()) == [], (
+        f"A refused run must not create output or cache files, found {list(tmp_path.iterdir())}"
+    )
+
+
+def test_incomplete_old_conference_suggests_retry(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=False),
+        ),
+        patch("gencon_audiobook.cli.conference_may_still_be_publishing", return_value=False),
+    ):
+        result = CliRunner().invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"]
+        )
+
+    flat = _flat(result.output)
+    assert "temporary network or website error" in flat, result.output
+    assert "still publishing" not in flat, "An old conference is not still being published"
+
+
+def test_incomplete_conference_builds_with_allow_partial(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=False),
+        ),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub") as mock_epub,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10", "--allow-partial"],
+        )
+
+    assert result.exit_code == 0, result.output
+    built = mock_epub.call_args.kwargs["conference"]
+    assert [t.title for t in built.talks] == ["Opening Remarks"], (
+        f"Only available talks should be built, got {[t.title for t in built.talks]}"
+    )
+
+
+def test_allow_partial_does_not_write_cache(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=False),
+        ),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        CliRunner().invoke(
+            main,
+            ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10", "--allow-partial"],
+        )
+
+    cache_path = tmp_path / _OCT_2026_TITLE / CACHE_FILENAME
+    assert not cache_path.exists(), "A partial conference must never be cached"
+
+
+def test_completion_report_shows_partial_banner(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=False),
+        ),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10", "--allow-partial"],
+        )
+
+    flat = _flat(result.output)
+    assert "PARTIAL: 1 talk(s) missing and not included" in flat, result.output
+    assert "gencon-audiobook --conference 2026-10 --overwrite" in flat, result.output
+
+
+def test_complete_conference_writes_cache(tmp_path: Path) -> None:
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=True),
+        ),
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        result = CliRunner().invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / _OCT_2026_TITLE / CACHE_FILENAME).exists(), "A complete conference is cached"
+
+
+def test_incomplete_cache_is_ignored_and_rescraped(tmp_path: Path) -> None:
+    """A cache written by an older version mid-publication must not hide new talks."""
+    conf_dir = tmp_path / _OCT_2026_TITLE
+    conf_dir.mkdir()
+    save_cache(_make_october_conference(complete=False), conf_dir)
+
+    with (
+        patch(
+            "gencon_audiobook.cli.scrape_conference",
+            return_value=_make_october_conference(complete=True),
+        ) as mock_scrape,
+        patch("gencon_audiobook.cli.download_conference"),
+        patch("gencon_audiobook.cli.build_epub"),
+    ):
+        result = CliRunner().invoke(
+            main, ["--output", str(tmp_path), "--epub-only", "--conference", "2026-10"]
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_scrape.assert_called_once()
+    refreshed = load_cache(conf_dir, expected_url=_OCT_2026_URL)
+    assert refreshed is not None and refreshed.incomplete_talks == [], (
+        "The re-scraped complete conference should replace the incomplete cache"
+    )
+
