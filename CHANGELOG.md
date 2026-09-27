@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0rc3] - 2026-09-27
+
+Second candidate for 0.2.0. Adds handling for conferences that are announced but not yet
+published, or only partly published, ahead of October 2026 General Conference.
+
 ### Added
 - `--allow-partial` flag: build a conference that is still being published from the talks posted so far. The completion report marks the build as PARTIAL and prints the command to rebuild the full conference later; partial builds are never cached (#191).
 
@@ -187,7 +192,8 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc2...HEAD
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc3...HEAD
+[0.2.0rc3]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc2...v0.2.0rc3
 [0.2.0rc2]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0rc2
 [0.1.8]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
