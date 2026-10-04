@@ -499,6 +499,8 @@ def test_download_error_exits_nonzero(tmp_path: Path) -> None:
             "gencon_audiobook.cli.download_conference",
             side_effect=DownloadError("connection timed out"),
         ),
+        patch("gencon_audiobook.cli.ensure_ffmpeg", return_value=Path("/usr/bin/ffmpeg")),
+        patch("gencon_audiobook.cli.ensure_ffprobe", return_value=Path("/usr/bin/ffprobe")),
     ):
         runner = CliRunner()
         result = runner.invoke(main, ["--output", str(tmp_path)])
