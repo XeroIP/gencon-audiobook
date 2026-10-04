@@ -7,27 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0rc3] - 2026-09-27
+## [0.2.0] - 2026-10-04
 
-Second candidate for 0.2.0. Adds handling for conferences that are announced but not yet
-published, or only partly published, ahead of October 2026 General Conference.
+Includes everything below relative to 0.1.8. `0.2.0rc2` (2026-09-11) was the only published
+release candidate; this release adds handling for conferences that are announced but not yet
+published, or only partly published (#191), on top of it.
 
 ### Added
 - `--allow-partial` flag: build a conference that is still being published from the talks posted so far. The completion report marks the build as PARTIAL and prints the command to rebuild the full conference later; partial builds are never cached (#191).
-
-### Fixed
-- Running with no `--conference` before a newly announced conference is published no longer fails with "The website structure may have changed". The tool reports that the conference has not been published yet and uses the previous one; `--conference` for an unpublished conference exits with a clear "not published yet" message (#191).
-- A conference that is only partly published is no longer built and cached as if complete. The tool lists the missing talks and stops before downloading anything unless `--allow-partial` is passed, so re-running once the talks are posted produces the complete audiobook and EPUB. Caches written by earlier versions while a conference was incomplete are ignored and re-scraped (#191).
-- Session placeholder pages are no longer fetched and parsed as talks, removing a burst of misleading selector warnings (#191).
-- `scripts/update_fixtures.py` works again (it imported a helper removed in #183) and skips a conference that is not published yet (#191).
-- Live smoke tests target the newest fully published conference instead of failing whenever the next conference is listed early (#191).
-
-## [0.2.0rc2] - 2026-09-11
-
-`0.2.0rc1` was never tagged or published; this is the first published candidate for 0.2.0 and
-includes everything below relative to 0.1.8.
-
-### Added
 - `--prefer-video-audio` flag: when a conference's 360p video audio is better than the MP3 source, the tool can extract the 96 kbps AAC track from video instead of downloading lower-quality MP3 audio. The default run warns before downloading, the opt-in path shows estimated download/audio-cache sizes, and newer conferences with better MP3 audio are protected from downgrade.
 - EPUB table-of-contents entries now include speaker names.
 - Completion reports now include session count and session names.
@@ -35,6 +22,11 @@ includes everything below relative to 0.1.8.
 - Download status messages now show audio/image count breakdowns.
 
 ### Fixed
+- Running with no `--conference` before a newly announced conference is published no longer fails with "The website structure may have changed". The tool reports that the conference has not been published yet and uses the previous one; `--conference` for an unpublished conference exits with a clear "not published yet" message (#191).
+- A conference that is only partly published is no longer built and cached as if complete. The tool lists the missing talks and stops before downloading anything unless `--allow-partial` is passed, so re-running once the talks are posted produces the complete audiobook and EPUB. Caches written by earlier versions while a conference was incomplete are ignored and re-scraped (#191).
+- Session placeholder pages are no longer fetched and parsed as talks, removing a burst of misleading selector warnings (#191).
+- `scripts/update_fixtures.py` works again (it imported a helper removed in #183) and skips a conference that is not published yet (#191).
+- Live smoke tests target the newest fully published conference instead of failing whenever the next conference is listed early (#191).
 - Scraper fetches now enforce robots.txt through the shared `_fetch()` path, matching the documented behavior.
 - `--prefer-video-audio` extraction now writes `.m4a.tmp` files with an explicit ffmpeg muxer, fixing Windows extraction failures where ffmpeg could not infer the output format.
 - `--prefer-video-audio` now falls back to the MP3 URL for an individual talk if video-audio extraction fails.
@@ -192,9 +184,8 @@ Initial release.
 - Filename sanitization preventing path traversal and special characters in output paths.
 - Fixture-based unit tests for scraper, downloader, audio pipeline, EPUB builder, and utilities; weekly live smoke test workflow with automatic GitHub issue creation on failure.
 
-[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc3...HEAD
-[0.2.0rc3]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0rc2...v0.2.0rc3
-[0.2.0rc2]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0rc2
+[Unreleased]: https://github.com/XeroIP/gencon-audiobook/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/XeroIP/gencon-audiobook/compare/v0.1.5...v0.1.6
